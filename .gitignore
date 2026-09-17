@@ -1,0 +1,33 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Model bundle: 4 MB+, fetched by setup.sh. Not source.
+models/face_landmarker.task
+models/bundle/
+
+# Measurement output. RESULTS.md is tracked; loose raw runs in the project root
+# are not, EXCEPT the baseline -- that one is irreplaceable (see CLAUDE.md).
+*.npz
+bench_*.json
+!baseline_cal.npz
+!bench_baseline.json
+
+# board_artifacts/ IS tracked, all of it. These are the runs pulled off the
+# board: 9 calibration/repeat .npz plus the soak logs. They are irreplaceable
+# (CLAUDE.md "keep every calibration run"), the eMMC has never been imaged,
+# and the whole lot is 152 KB. The blanket *.npz rule above would have dropped
+# them silently -- which is the same class of mistake as the soak that
+# "finished" in 20 seconds. Do not re-ignore this directory.
+!board_artifacts/
+!board_artifacts/**
+
+# Per-unit identity, generated from config.toml by config.settings_toml()
+circuitpython/settings.toml
+
+.venv/
+venv/
+.DS_Store
+
+# Host-side HIL connection settings (per-machine, not source)
+.hil.env

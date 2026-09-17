@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#
+# soak-status -- one-line health summary of a running soak, for host-side polling.
+#
+# Exists because polling the soak over `hil raw` with inline $(...) is a quoting
+# minefield: the nested quotes do not survive the ssh layer and you get a
+# mangled line that silently looks like a healthy zero. Keep the logic here.
+#
+# Prints, on one line:
+#   inf=N      inference-arm processes (want 1)
+#   bench=N    bench-arm processes (want >=1)
+#   load=Ns    last progress offset from load.log (should climb to ~2700)
+#   soakKB=N   soak.log size
+#   done=X     FINISHED once the bench loop completes, else "no"
+#   err=N      Traceback count in soak.log -- MUST stay 0. A nonzero err with a
+#              growing soak.log is the "camera node moved" failure, which
+#              completes instantly and looks like a pass.
+#   tempC=N    thermal_zone0
+#
+# The [b]ench / [n]umpy bracket trick stops pgrep matching this script itself.
+set -uo pipefail
+cd "$(dirname "$0")/.." || exit 1
+
+inf=$(pgrep -cf "import [n]umpy" || true)
+bench=$(pgrep -cf "[b]in/bench" || true)
+load=$(grep -o '^[0-9]*s' load.log 2>/dev/null | tail -1 || true)
+soak_b=$(stat -c%s soak.log 2>/dev/null || echo 0)
+done_s=$(cat soak.done 2>/dev/null || echo no)
+err=$(grep -c Traceback soak.log 2>/dev/null || true)
+temp=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 0)
+
+printf 'inf=%s bench=%s load=%s soakKB=%s done=%s err=%s tempC=%s\n' \
+  "${inf:-0}" "${bench:-0}" "${load:-0s}" "$((soak_b / 1024))" \
+  "${done_s:-no}" "${err:-0}" "$((temp / 1000))"

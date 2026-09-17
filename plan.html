@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UNO Q gaze tracker — front-loaded build plan</title>
+<style>
+:root{
+  color-scheme: light;
+  --plane:#f9f9f7; --surface:#fcfcfb;
+  --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --rule:#c3c2b7; --border:rgba(11,11,11,.10);
+  --accent:#2a78d6;
+  --p0:#86b6ef; --p1:#5598e7; --p2:#2a78d6; --p3:#1c5cab; --p4:#104281;
+  --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  --done:#006300;
+}
+@media (prefers-color-scheme: dark){
+  :root:where(:not([data-theme="light"])){
+    color-scheme: dark;
+    --plane:#0d0d0d; --surface:#1a1a19;
+    --ink:#ffffff; --ink2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --rule:#383835; --border:rgba(255,255,255,.10);
+    --accent:#3987e5;
+    --p0:#184f95; --p1:#256abf; --p2:#3987e5; --p3:#6da7ec; --p4:#9ec5f4;
+    --done:#0ca30c;
+  }
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--plane); color:var(--ink);
+  font:15px/1.62 system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:860px;margin:0 auto;padding:40px 22px 90px}
+
+header{margin-bottom:30px}
+h1{font-size:25px;line-height:1.25;margin:0 0 6px;letter-spacing:-.015em}
+.sub{color:var(--ink2);margin:0 0 20px;font-size:14.5px}
+.meta{display:flex;gap:26px;flex-wrap:wrap;padding:15px 18px;
+  background:var(--surface);border:1px solid var(--border);border-radius:10px}
+.meta div{min-width:88px}
+.meta .k{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.meta .v{font-size:21px;font-weight:640;margin-top:2px}
+
+/* progression strip: ordinal ramp, one hue, ordered by phase */
+.strip{display:flex;gap:2px;margin:26px 0 8px;height:9px}
+.strip i{flex:1;border-radius:2px}
+.strip i:nth-child(1){background:var(--p0);flex:.7}
+.strip i:nth-child(2){background:var(--p1);flex:1.5}
+.strip i:nth-child(3){background:var(--p2);flex:1.3}
+.strip i:nth-child(4){background:var(--p3);flex:.5}
+.strip i:nth-child(5){background:var(--p4);flex:4}
+.striplab{display:flex;gap:2px;font-size:11.5px;color:var(--muted)}
+.striplab span:nth-child(1){flex:.7}.striplab span:nth-child(2){flex:1.5}
+.striplab span:nth-child(3){flex:1.3}.striplab span:nth-child(4){flex:.5}
+.striplab span:nth-child(5){flex:4}
+
+.thesis{margin:30px 0 34px;padding-left:16px;border-left:2px solid var(--rule);
+  color:var(--ink2);font-size:14.5px}
+
+section{background:var(--surface);border:1px solid var(--border);
+  border-radius:12px;padding:24px 26px;margin:0 0 18px}
+.ph{display:flex;align-items:baseline;gap:11px;margin-bottom:3px;flex-wrap:wrap}
+.dot{width:9px;height:9px;border-radius:50%;flex:none;transform:translateY(-1px)}
+h2{font-size:18.5px;margin:0;letter-spacing:-.01em}
+.when{margin-left:auto;font-size:12.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.why{color:var(--ink2);font-size:14px;margin:9px 0 16px}
+h3{font-size:13px;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--muted);margin:22px 0 9px;font-weight:640}
+h3:first-of-type{margin-top:4px}
+
+ul.ck{list-style:none;padding:0;margin:0}
+ul.ck li{display:flex;gap:10px;align-items:flex-start;padding:5px 0;
+  border-bottom:1px solid var(--grid)}
+ul.ck li:last-child{border-bottom:0}
+ul.ck input{margin:4px 0 0;accent-color:var(--accent);width:15px;height:15px;
+  flex:none;cursor:pointer}
+ul.ck label{cursor:pointer;font-size:14.5px}
+ul.ck li.on label{color:var(--muted);text-decoration:line-through}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.8px;
+  background:var(--plane);padding:1px 5px;border-radius:4px;
+  border:1px solid var(--border)}
+
+.gate{margin:18px 0 4px;padding:13px 16px;border-radius:9px;
+  background:var(--plane);border:1px solid var(--border);
+  border-left:3px solid var(--accent)}
+.gate .lbl{font-size:11px;font-weight:700;letter-spacing:.09em;
+  color:var(--accent);text-transform:uppercase}
+.gate p{margin:3px 0 0;font-size:14.5px}
+
+.note{margin:18px 0 4px;padding:14px 16px;border-radius:9px;
+  background:var(--plane);border:1px solid var(--border);
+  border-left:3px solid var(--serious)}
+.note .lbl{font-size:11px;font-weight:700;letter-spacing:.09em;
+  color:var(--serious);text-transform:uppercase}
+.note p{margin:4px 0 0;font-size:14.3px;color:var(--ink2)}
+.note strong{color:var(--ink)}
+
+table{width:100%;border-collapse:collapse;margin:14px 0 0;font-size:13.8px}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--muted);font-weight:640;padding:0 10px 7px 0;
+  border-bottom:1px solid var(--rule)}
+td{padding:8px 10px 8px 0;border-bottom:1px solid var(--grid);
+  vertical-align:top;color:var(--ink2)}
+td:first-child{color:var(--ink);white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.sev{display:inline-flex;align-items:center;gap:5px;font-weight:600;
+  color:var(--critical)}
+.sev::before{content:"!";display:inline-flex;align-items:center;
+  justify-content:center;width:14px;height:14px;border-radius:50%;
+  background:var(--critical);color:#fff;font-size:10px;font-weight:800;flex:none}
+
+.forks{display:grid;gap:11px;margin-top:6px}
+.fork{padding:14px 16px;border-radius:9px;background:var(--plane);
+  border:1px solid var(--border)}
+.fork .nm{font-weight:660;font-size:14.5px;margin-bottom:3px}
+.fork .cond{font-size:12.5px;color:var(--muted);
+  font-variant-numeric:tabular-nums;margin-bottom:6px}
+.fork p{margin:0;font-size:14px;color:var(--ink2)}
+.fork.a{border-left:3px solid var(--good)}
+.fork.b{border-left:3px solid var(--warning)}
+.fork.c{border-left:3px solid var(--critical)}
+
+.rules li{margin-bottom:11px;font-size:14.3px;color:var(--ink2)}
+.rules strong{color:var(--ink)}
+.rules{padding-left:19px}
+
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--surface);
+  border-top:1px solid var(--border);padding:11px 22px;
+  display:flex;align-items:center;gap:14px;font-size:13px}
+.bar .track{flex:1;height:5px;background:var(--grid);border-radius:3px;
+  overflow:hidden;max-width:420px}
+.bar .fill{height:100%;width:0;background:var(--done);border-radius:3px;
+  transition:width .22s ease}
+.bar .n{color:var(--ink2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.bar button{margin-left:auto;font:inherit;font-size:12.5px;color:var(--ink2);
+  background:var(--plane);border:1px solid var(--border);border-radius:7px;
+  padding:5px 12px;cursor:pointer}
+.bar button:hover{color:var(--ink)}
+@media (max-width:560px){.when{margin-left:0;width:100%}.bar .n span{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Sip-n-puff eye tracking on the Arduino UNO Q</h1>
+  <p class="sub">Front-loaded build plan — cram weekend, then taper</p>
+  <div class="meta">
+    <div><div class="k">Today</div><div class="v">Fri 7 Aug</div></div>
+    <div><div class="k">Cram</div><div class="v">8–9 Aug</div></div>
+    <div><div class="k">Deadline</div><div class="v">30 Sep</div></div>
+    <div><div class="k">Days left</div><div class="v">54</div></div>
+  </div>
+
+  <div class="strip" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="striplab">
+    <span>Fri</span><span>Sat</span><span>Sun</span><span>Fork</span>
+    <span>Weeks 1–7</span>
+  </div>
+
+  <p class="thesis">The weekend converts <em>unknowns</em> into <em>knowns</em>.
+  It does not build features. Features are schedulable — you can estimate them
+  and move them. Unknowns are not, and every unknown still alive on Monday is a
+  hole in the rest of the schedule. So the cram spends itself on bring-up,
+  camera truth, and the first accuracy number. Three numbers come out of it —
+  <strong>fps</strong>, <strong>angular error</strong>, and the
+  <strong>target size</strong> that error implies. They fork the remaining seven
+  weeks. Don't build past them.</p>
+</header>
+
+<section>
+  <div class="ph"><span class="dot" style="background:var(--p0)"></span>
+    <h2>Phase 0 — Boot and probe</h2>
+    <span class="when">Tonight · ~3 h</span></div>
+  <p class="why">Tonight rather than tomorrow morning for one reason: if
+  something physical is missing — a cable, the PD brick, a dead camera — you
+  find out while you can still order or borrow it, instead of burning Saturday's
+  best hours discovering it.</p>
+
+  <ul class="ck">
+    <li><input type="checkbox" id="a1"><label for="a1">Unbox; hub to HDMI monitor, keyboard, Ethernet</label></li>
+    <li><input type="checkbox" id="a2"><label for="a2">Power the <em>hub</em> from the PD brick — not the board</label></li>
+    <li><input type="checkbox" id="a3"><label for="a3">Camera into a USB-A port on the hub, not the pass-through</label></li>
+    <li><input type="checkbox" id="a4"><label for="a4">First boot, network up, App Lab loads</label></li>
+    <li><input type="checkbox" id="a5"><label for="a5"><code>sudo apt install -y git v4l-utils</code></label></li>
+    <li><input type="checkbox" id="a6"><label for="a6">Unpack the spike, run <code>./setup.sh</code> (it makes swap first — let it)</label></li>
+    <li><input type="checkbox" id="a7"><label for="a7">Run <code>./bin/probe</code></label></li>
+  </ul>
+
+  <div class="gate"><div class="lbl">Gate 0</div>
+    <p><code>probe</code> exits 0. Everything downstream assumes this.</p></div>
+
+  <table>
+    <thead><tr><th>If probe says</th><th>Do this</th></tr></thead>
+    <tbody>
+      <tr><td><span class="sev">glibc &lt; 2.28</span></td><td>You're on the hard path. Stop, sleep, reassess Saturday — do not start a Bazel build at midnight.</td></tr>
+      <tr><td>no <code>/dev/video*</code></td><td>Hub power. Try the camera in the board's USB-C directly to isolate.</td></tr>
+      <tr><td>no MJPEG offered</td><td>Wrong device node — probe lists several, and metadata nodes have no formats.</td></tr>
+      <tr><td>controls did NOT stick</td><td>Raise <code>warmup_frames</code> to 15. This is the C920 STREAMON reset.</td></tr>
+      <tr><td>under 5 fps on noise</td><td>CPU governor is probably <code>powersave</code>. Set <code>performance</code>.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note"><div class="lbl">Hard stop</div>
+    <p>Midnight. <strong>Do not start the bench tonight.</strong> A tired first
+    measurement is one you won't trust and will redo anyway.</p></div>
+</section>
+
+<section>
+  <div class="ph"><span class="dot" style="background:var(--p1)"></span>
+    <h2>Phase 1 — Get the numbers</h2>
+    <span class="when">Saturday · ~10 h</span></div>
+
+  <h3>Morning · 3–4 h · Camera truth</h3>
+  <p class="why">Everything measured today inherits from this block. A sloppy
+  camera setup doesn't just make later numbers wrong — it makes them
+  <em>plausible</em>, and you'll spend Sunday tuning a filter to fix a focus
+  problem.</p>
+  <ul class="ck">
+    <li><input type="checkbox" id="b1"><label for="b1">Mount the camera where it will actually live, on the screen</label></li>
+    <li><input type="checkbox" id="b2"><label for="b2"><strong>Measure</strong> eye-to-screen distance with a tape → <code>config.toml</code></label></li>
+    <li><input type="checkbox" id="b3"><label for="b3"><strong>Measure</strong> the screen's <em>active area</em> in mm, not the bezel → config</label></li>
+    <li><input type="checkbox" id="b4"><label for="b4">Sweep <code>focus_absolute</code> 0→100 by 5, seated; keep the crispest iris edge</label></li>
+    <li><input type="checkbox" id="b5"><label for="b5">Lock exposure; sharp iris/sclera boundary, no blur on fast looks</label></li>
+    <li><input type="checkbox" id="b6"><label for="b6">Re-run <code>./bin/probe</code></label></li>
+  </ul>
+  <div class="gate"><div class="lbl">Gate 1a</div>
+    <p>All controls verified, and you can see a sharp iris.</p></div>
+
+  <h3>Afternoon · 3–4 h · Speed</h3>
+  <ul class="ck">
+    <li><input type="checkbox" id="c1"><label for="c1"><code>./bin/bench --sweep --save bench_baseline.json</code></label></li>
+    <li><input type="checkbox" id="c2"><label for="c2">Sit exactly as the user will — an empty-room sweep measures the failure path</label></li>
+    <li><input type="checkbox" id="c3"><label for="c3">Three runs: bright room, dim room, backlit-window worst case</label></li>
+  </ul>
+  <div class="gate"><div class="lbl">Gate 1b</div>
+    <p>Pick the largest <code>input_size</code> whose p5 fps stays ≥ 15. Write
+    it down. If nothing reaches 15: check the governor, check thermal
+    throttling, and confirm you're on the mediapipe backend rather than the
+    unverified LiteRT one.</p></div>
+
+  <h3>Evening · 2–3 h · First accuracy number</h3>
+  <ul class="ck">
+    <li><input type="checkbox" id="d1"><label for="d1"><code>./bin/calibrate --out baseline_cal.npz</code></label></li>
+    <li><input type="checkbox" id="d2"><label for="d2">Three sessions — <strong>keep every one</strong></label></li>
+    <li><input type="checkbox" id="d3"><label for="d3">Write the three numbers in a file: fps, degrees, target size</label></li>
+  </ul>
+
+  <div class="note"><div class="lbl">Most important note in this plan</div>
+    <p>Save the raw baseline <strong>before you tune anything</strong>. The
+    strongest figure this project can put in front of a judge is accuracy over
+    time with and without online recalibration — and the "without" arm can only
+    be recorded once, before you start improving things. Tune first and it's
+    gone permanently.</p></div>
+
+  <div class="gate"><div class="lbl">Gate 1c</div>
+    <p>You have a p95 angular error in degrees, and the target size it implies.</p></div>
+</section>
+
+<section>
+  <div class="ph"><span class="dot" style="background:var(--p2)"></span>
+    <h2>Phase 2 — Close the loop</h2>
+    <span class="when">Sunday · ~8 h</span></div>
+
+  <h3>Morning · 3 h · UART link and real thresholds</h3>
+  <ul class="ck">
+    <li><input type="checkbox" id="e1"><label for="e1">Meter both boards' logic levels <strong>before</strong> connecting</label></li>
+    <li><input type="checkbox" id="e2"><label for="e2">Wire TX↔RX, RX↔TX, GND↔GND</label></li>
+    <li><input type="checkbox" id="e3"><label for="e3">Swap your I2C sensor into <code>code.py</code> — keep the contract: signed hPa, positive = puff</label></li>
+    <li><input type="checkbox" id="e4"><label for="e4">Tare, then log pressure through ordinary sipping and puffing</label></li>
+    <li><input type="checkbox" id="e5"><label for="e5">Set the four thresholds <em>from that log</em>, not from guesses</label></li>
+  </ul>
+  <div class="gate"><div class="lbl">Gate 2a</div>
+    <p>Puffing produces <code>E left_click</code> on the UNO Q's serial.</p></div>
+
+  <h3>Afternoon · 3 h · Gaze moves a cursor</h3>
+  <p class="why">The spike deliberately stops at measurement — there's no
+  <code>bin/run</code> yet. This block is where you write it, and it's about 150
+  lines of glue: capture → resize → detect → extract → blink gate → predict →
+  One Euro → protocol → serial.</p>
+  <ul class="ck">
+    <li><input type="checkbox" id="f1"><label for="f1">Write <code>bin/run</code> composing the pipeline</label></li>
+    <li><input type="checkbox" id="f2"><label for="f2">Load <code>baseline_cal.npz</code>; suppress output while <code>is_blinking()</code></label></li>
+    <li><input type="checkbox" id="f3"><label for="f3">Watchdog: heartbeat silent past timeout → stop moving the cursor</label></li>
+  </ul>
+  <div class="gate"><div class="lbl">Gate 2b</div>
+    <p>The cursor follows your eyes and a puff clicks.</p></div>
+
+  <h3>Evening · 2 h · Online recalibration, live</h3>
+  <ul class="ck">
+    <li><input type="checkbox" id="g1"><label for="g1">Wire <code>observe_click()</code> to real clicks with the element's centre</label></li>
+    <li><input type="checkbox" id="g2"><label for="g2">30 minutes of ordinary use, logging accuracy every few minutes</label></li>
+    <li><input type="checkbox" id="g3"><label for="g3">Deliberately shift your seating position partway through</label></li>
+    <li><input type="checkbox" id="g4"><label for="g4">Write one page of what you learned — the spine of the maker.io post</label></li>
+  </ul>
+  <div class="gate"><div class="lbl">Gate 2c</div>
+    <p>You have a drift curve showing error falling as clicks accumulate.</p></div>
+</section>
+
+<section>
+  <div class="ph"><span class="dot" style="background:var(--p3)"></span>
+    <h2>The Sunday-night fork</h2>
+    <span class="when">Decide once, in writing</span></div>
+  <p class="why">Your numbers pick the path. Commit to it and don't relitigate
+  on Tuesday.</p>
+  <div class="forks">
+    <div class="fork a"><div class="nm">Path A — direct cursor is viable</div>
+      <div class="cond">fps ≥ 20 · error ≤ 2.0°</div>
+      <p>Weeks go to the AAC grid, polish and user testing. You have room.</p></div>
+    <div class="fork b"><div class="nm">Path B — grid first, zoom-to-refine for cursor</div>
+      <div class="cond">fps ≥ 15 · error 2.0–3.5°</div>
+      <p>The likely outcome. Plan for zoom-to-refine rather than treating it as
+      a fallback.</p></div>
+    <div class="fork c"><div class="nm">Path C — diagnose before building</div>
+      <div class="cond">fps &lt; 15 · or error &gt; 3.5°</div>
+      <p>Suspect geometry before code. The C920's 78° lens may simply be putting
+      too few pixels on the iris — move the camera closer, or fit an Arducam M12
+      body with a ~40° lens. That roughly doubles linear iris resolution and is
+      worth more than any amount of filter tuning.</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="ph"><span class="dot" style="background:var(--p4)"></span>
+    <h2>Weeks 1–7 — the taper</h2>
+    <span class="when">10 Aug – 30 Sep</span></div>
+  <table>
+    <thead><tr><th>Week</th><th>Dates</th><th>Focus</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Aug 10–16</td><td>Your path's core build. <strong>Publish the maker.io post as a WIP now</strong> and update it weekly.</td></tr>
+      <tr><td>2</td><td>Aug 17–23</td><td>AAC grid, or zoom-to-refine.</td></tr>
+      <tr><td>3</td><td>Aug 24–30</td><td>Robustness: blink handling, face-loss recovery, watchdog, boot-to-ready.</td></tr>
+      <tr><td>4</td><td>Aug 31–Sep 6</td><td><strong>Real user testing.</strong> Can't be compressed, can't be faked, can't be moved to week 7.</td></tr>
+      <tr><td>5</td><td>Sep 7–13</td><td>Deployed config: barrel-jack power, no hub, enclosure. Verify the runtime fits on 2 GB.</td></tr>
+      <tr><td>6</td><td>Sep 14–20</td><td>Documentation and video.</td></tr>
+      <tr><td>7</td><td>Sep 21–27</td><td>Buffer. It will be consumed by something you can't currently predict.</td></tr>
+      <tr><td>—</td><td>Sep 28–30</td><td>Submit. <strong>Not on the 30th.</strong></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <div class="ph"><h2>Standing rules</h2></div>
+  <ul class="rules">
+    <li><strong>Publish early, update often.</strong> Documentation quality is an
+    explicit judging criterion. A post that shows the journey — dead ends
+    included — reads as more credible than one assembled in a panic on Sep 29,
+    and starting it in week 1 costs nothing because you're writing the notes
+    anyway.</li>
+    <li><strong>Photograph everything as you go.</strong> You cannot reshoot week
+    one. Bench shots, the wiring, the first ugly working version, the
+    calibration screen.</li>
+    <li><strong>Keep every calibration run.</strong> They accumulate into the
+    accuracy-over-time figure that is the strongest single visual this project
+    can produce.</li>
+    <li><strong>Hard stops at night.</strong> Debugging a vision pipeline past
+    midnight reliably produces negative progress — you introduce a bug at 1am
+    and spend two hours Saturday finding it. Sleeping is part of the plan, not a
+    concession to it.</li>
+    <li><strong>Both contests.</strong> The same work submits to the
+    DigiKey/Arduino Dream Lab Challenge (#UNOQDreamLab on maker.io, closes
+    Sep 30, four winners at ~$5,000) and to Hackster's <em>Invent the Future
+    with Arduino UNO Q</em>. One build, two shots.</li>
+  </ul>
+</section>
+
+</div>
+
+<div class="bar">
+  <div class="track"><div class="fill" id="fill"></div></div>
+  <div class="n" id="count">0 / 0 <span>steps done</span></div>
+  <button id="reset">Reset</button>
+</div>
+
+<script>
+const boxes = [...document.querySelectorAll('ul.ck input')];
+const fill = document.getElementById('fill');
+const count = document.getElementById('count');
+function sync(){
+  const n = boxes.filter(b => b.checked).length;
+  fill.style.width = (100 * n / boxes.length) + '%';
+  count.firstChild.nodeValue = n + ' / ' + boxes.length + ' ';
+  boxes.forEach(b => b.closest('li').classList.toggle('on', b.checked));
+}
+boxes.forEach(b => b.addEventListener('change', sync));
+document.getElementById('reset').addEventListener('click', () => {
+  boxes.forEach(b => b.checked = false); sync();
+});
+sync();
+</script>
+</body>
+</html>

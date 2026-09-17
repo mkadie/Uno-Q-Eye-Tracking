@@ -1,0 +1,198 @@
+# UNO Q gaze spike configuration.
+#
+# The same file is read by the Linux side and (the [breath] section) by the
+# CircuitPython board, so thresholds cannot drift out of sync between them.
+
+[camera]
+# MEASURED 2026-08-16: /dev/videoN is NOT stable across reboots. The Qualcomm
+# Venus decoder and USB enumeration race for the low numbers -- the C920 was
+# video0 on 2026-08-08 and video2 on 2026-08-16. A wrong node does not degrade,
+# it fails outright, and it silently voided a whole soak run (every bench died
+# in ~1s, so the loop "finished" in 20s and looked like a pass).
+#
+# So name the camera, not the number. camera.py resolves symlinks before
+# opening, so this by-id path is stable across reboots.
+#
+# NOTE the serial is THIS camera's. On a different C920 -- i.e. anyone
+# replicating the build -- it will not match, and you get a named error rather
+# than a wrong camera. Find yours with:  ls -l /dev/v4l/by-id/
+# Take the *-video-index0 entry; index1 is the metadata node, not video.
+device   = "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_1DB6303F-video-index0"
+# TRIED AND REVERTED 2026-08-16: 1920x1080 capture + input_size 640 + the
+# full-res ROI crop (litert_backend.detect(full=...)). It raised iris radius
+# 8.3 -> 10.0 px and made the gaze signal WORSE, not better:
+#   raw iris-vs-target correlation  x 0.902 -> 0.664,  y 0.622 -> 0.545
+#   calibration validation          8.2 -> 18.2 deg
+#   face detection rate             100% -> 55%,  fps p50 23 -> 14.8
+# The ROI is derived from the DOWNSCALED detection image, so its centring error
+# is magnified 3x when cropped from 1920 -- and the landmark model is trained on
+# ALIGNED faces, so alignment matters more than sharpness. Do not retry this
+# without first making the ROI itself more precise. See RESULTS.md.
+width    = 1280          # MEASURED 2026-08-08: 720p beats 1080p here, 15.0 ->
+height   = 720           # 23.2 fps p50. The original "capture wide, crop later"
+fps      = 30            # reasoning is sound but does not apply to the pipeline
+                         # as built: bin/bench downscales to input_size BEFORE
+                         # the backend, and the backend crops from that
+                         # downscaled frame -- so the extra 1080p pixels are
+                         # discarded before anything can use them, while their
+                         # MJPEG decode cost is paid on every frame.
+                         # If Gate 1c wants sharper irises, the fix is to crop
+                         # the face ROI from the FULL-RES frame while detecting
+                         # on the small one. Then, and only then, go back to
+                         # 1080p. 30 fps is this C920's max at 720p MJPG.
+fourcc   = "MJPG"        # NOT optional: YUYV at 1080p30 exceeds USB 2.0.
+
+# Applied AFTER stream start, then read back to verify -- the C920 family
+# resets controls at VIDIOC_STREAMON and does it silently.
+exposure = 156           # 100us units, so 15.6 ms.
+                         # MEASURED 2026-08-08: while STREAMING the C920 only
+                         # accepts exposures one EV stop apart --
+                         #   39, 78, 156, 312, 625, 1250, 2500
+                         # -- and floors anything else to the stop below. The
+                         # control advertises min=3 max=2047 step=1, and with
+                         # no stream open every value does stick, so this is
+                         # invisible until you verify a live capture. The old
+                         # value of 250 silently became 156.
+                         # PICK A VALUE FROM THE LADDER. 312 is ~31 ms, close
+                         # to the whole 33 ms frame at 30 fps, so it invites
+                         # motion blur on a fast gaze shift; 156 is the sane
+                         # bright-room choice. Re-check the ladder if you
+                         # change fps or resolution.
+focus    = 30            # C920 range 0-250 step 5; 0=infinity, higher=nearer.
+                         # MEASURED 2026-08-08 by bin/facecheck at 584 mm:
+                         # iris-region Laplacian variance peaks at 30 (25.7),
+                         # flat to 35 (25.6), collapses to 4.8 by 100. Re-run
+                         # bin/facecheck if the seating distance changes.
+gain     = 0
+
+[inference]
+backend               = "mediapipe"   # falls back to litert automatically
+input_size            = 1280          # MEASURED 2026-08-08: do NOT downscale.
+                                      # 1280 equals the capture width, so
+                                      # resize_for_inference becomes a no-op
+                                      # (11.8 ms -> 1.1 ms) and the backend
+                                      # crops the face from full-resolution
+                                      # pixels instead of blurred ones. Faster
+                                      # AND sharper, which is rare enough to
+                                      # be worth stating: the usual
+                                      # speed-vs-accuracy tradeoff does not
+                                      # apply because both models have FIXED
+                                      # input sizes (128 detector, 256
+                                      # landmark). Downscaling first therefore
+                                      # buys no speed at all -- it only
+                                      # discards detail before the 256 crop.
+num_threads           = 3     # MEASURED: not 4. Inference on all 4 cores
+                              # starves the MJPEG decode in the capture
+                              # thread, and the pipeline waits on the camera
+                              # it just outran. 4thr 18.0 fps, 3thr 23.2 fps.
+blink_ear_threshold   = 0.15
+
+[screen]
+width_px            = 1920
+height_px           = 1080
+width_mm            = 338    # measured 2026-08-08: 13.300 in active area
+height_mm           = 190    # measured 2026-08-08:  7.475 in active area
+viewing_distance_mm = 584    # measured 23 in, eye to screen. Angular error is
+                             # meaningless without this, so measure it.
+
+# Sanity check on the above: 13.300 / 7.475 = 1.779 against 16:9 = 1.7778, so
+# the active area agrees with a 1080p panel to 0.06%. Worth doing every time
+# these are measured -- an initial reading of 7.25 in gave 1.862, which is the
+# signature of measuring to the bezel lip rather than the lit edge, and it
+# would have put vertical mm/px 4.5% out from horizontal. That does not look
+# like an error in the results; it looks like the tracker being worse
+# vertically than horizontally, and you would go tuning the filter for it.
+#
+# Scale: 0.1759 mm/px horizontal, 0.1758 mm/px vertical -- isotropic.
+# At 584 mm, 1 deg subtends 10.2 mm on screen = 58 px.
+
+[filter]
+# One Euro. Tune in this order: beta=0, lower min_cutoff until fixation
+# jitter is acceptable; then raise beta until fast movement is not laggy.
+min_cutoff = 1.0
+beta       = 0.007
+d_cutoff   = 1.0
+
+[calibration]
+points            = 9
+samples_per_point = 30
+settle_ms         = 700
+# MEASURED 2026-08-16: "auto" picks the penalty by leave-one-out CV at fit
+# time. A fixed value cannot be right here -- and 0.001 became actively WRONG
+# when calib.py started standardising the design matrix, because on
+# unit-variance columns that is effectively no regularisation at all. Run 6
+# proved it: training error 0.10 deg, validation 38.83 deg. Pure overfit.
+ridge             = "auto"
+ring_size         = 256   # online samples retained from confirmed clicks
+refit_every       = 12    # refit after this many new clicks
+
+[breath]
+# Real pressure units, because the sensor is I2C rather than analog. These
+# numbers mean the same thing on someone else's build, which is the entire
+# reason this is a config file and not a set of ADC constants.
+debounce_ms        = 40
+hold_ms            = 1500   # hard sip held this long opens command mode
+command_timeout_ms = 4000
+gaze_timeout_ms    = 400    # stop pointing if gaze goes stale
+move_deadzone_px   = 3
+
+[breath.thresholds]
+soft_puff =   4.0    # hPa above ambient -> left click
+hard_puff =  12.0    # -> drag toggle
+soft_sip  =  -4.0    # -> right click
+hard_sip  = -12.0    # held past hold_ms -> command mode
+
+[breath.sequences]
+# Sequences are entered ONLY after the long-hard-sip prefix, so they add zero
+# latency to ordinary clicks. This is the whole reason triple-puff was
+# rejected: recognising it would mean delaying every click to watch for it.
+"puff"      = "recalibrate"
+"puff,puff" = "mode_toggle"
+
+[serial]
+port                 = "/dev/ttyUSB0"
+baud                 = 115200
+heartbeat_timeout_ms = 1500   # breath board silent this long -> stop pointing
+
+# ---------------------------------------------------------------------------
+# Multi-unit identity
+#
+# Only relevant when more than one gaze mouse shares a USB host (e.g. two users
+# on one Fruit Jam, each driving their own cursor). A single-unit build can
+# ignore everything below.
+#
+# The problem it solves: two units of the same build are indistinguishable by
+# USB descriptor -- same VID, same PID, same product string -- so the host
+# binds cursors in enumeration order, which varies between reboots, and the two
+# cursors swap. Giving each unit a distinct product string fixes it.
+#
+# Vary the product STRING, never the VID/PID. Inventing a vendor ID means
+# squatting on somebody else's registered number and buys nothing.
+# ---------------------------------------------------------------------------
+
+[device]
+# This unit. `usb_label` is what boot.py hands to
+# supervisor.set_usb_identification(), and what the host binds on. It must
+# match one of the [[cursor]] entries below.
+name      = "left"
+usb_label = "Gaze Mouse L"
+
+# Host-side binding table. `match` is the USB product string.
+#
+# `glyph` is REQUIRED and must be unique per cursor. Cursor identity is carried
+# by SHAPE, not colour -- distinguishing two cursors by colour alone fails for
+# a colourblind user, which on an assistive device is not a defensible default.
+# `accent` is decorative reinforcement only; leave it unset and a validated
+# palette slot is assigned in order.
+
+[[cursor]]
+name   = "left"
+match  = "Gaze Mouse L"
+glyph  = "cursor_l.bmp"      # e.g. standard arrow
+accent = "#2a78d6"
+
+[[cursor]]
+name   = "right"
+match  = "Gaze Mouse R"
+glyph  = "cursor_r.bmp"      # e.g. outlined/mirrored arrow — visibly different
+accent = "#eb6834"

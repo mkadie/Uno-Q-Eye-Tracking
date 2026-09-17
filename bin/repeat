@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""Within-session repeatability: show the SAME targets several times, minutes apart.
+
+This measures the thing that may be the project's actual ceiling.
+
+AUTOCAL.md Experiment C compared the same 25 targets across two *sessions* and
+found the disagreement was about half the entire across-target signal spread.
+If features are only ~2x repeatable, no calibration architecture rescues the
+accuracy -- you are fighting the sensor. But that estimate spans a session
+boundary, so it is an upper bound: the head genuinely moved between sittings,
+and some of that "noise" is real signal nobody is modelling.
+
+This run separates the two. Same sitting, same chair, same lighting, same
+targets, shown N times with minutes between repeats. What is left is the
+sensor's own repeatability plus whatever drifts within a session.
+
+Reading the result:
+  noise << spread   -> the sensor is fine; the error is in the mapping, and
+                       better calibration is worth building.
+  noise ~= spread   -> the ceiling is the sensor. Stop tuning the regression;
+                       design the UI for ~5 deg (PLAN.md path B) or change
+                       the optics.
+
+  bin/repeat                        8 targets, 3 passes
+  bin/repeat --targets 12 --passes 4
+  bin/repeat --gap 45               seconds of deliberate idle between passes
+"""
+
+import argparse
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import cv2
+import numpy as np
+
+from spike import backends, camera, config, features
+from spike.targets import WIN, collect_point, grid_points, shuffled
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", default=None)
+    ap.add_argument("--targets", type=int, default=8)
+    ap.add_argument("--passes", type=int, default=3)
+    ap.add_argument("--gap", type=float, default=30.0,
+                    help="idle seconds between passes, on top of the time the "
+                         "pass itself takes")
+    ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--out", default="repeat.npz")
+    ap.add_argument("--windowed", action="store_true")
+    args = ap.parse_args()
+
+    cfg = config.load(args.config)
+    W = cfg["screen"]["width_px"]
+    H = cfg["screen"]["height_px"]
+
+    c = cfg["camera"]
+    cam = camera.Camera(c["device"], c["width"], c["height"], c["fps"],
+                        c["fourcc"], c["exposure"], c["focus"],
+                        c["gain"]).open()
+    if not cam.all_verified():
+        print("!! camera controls did not stick; run bin/probe (bright light?)")
+        print(cam.control_report())
+    be = backends.create(prefer=cfg["inference"]["backend"])
+
+    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+    if not args.windowed:
+        cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN,
+                              cv2.WINDOW_FULLSCREEN)
+    canvas = np.zeros((H, W, 3), dtype=np.uint8)
+
+    seed = args.seed if args.seed is not None else 12345
+    pts = grid_points(args.targets, W, H)
+
+    X, tgt, pas, ts = [], [], [], []
+    t_start = time.time()
+    try:
+        for p in range(args.passes):
+            # Re-shuffle every pass. Identical order would confound repeat
+            # noise with position-in-sequence, the same trap that invalidated
+            # calibration runs 1-6.
+            order, _ = shuffled(pts, np.random.default_rng(seed + p))
+            for i, pt in enumerate(order):
+                f = collect_point(cam, be, cfg, canvas, pt,
+                                  "pass %d/%d   target %d/%d"
+                                  % (p + 1, args.passes, i + 1, len(order)))
+                if f is None:
+                    print("aborted")
+                    return 1
+                X.append(f)
+                tgt.append(pt)
+                pas.append(p)
+                ts.append(time.time() - t_start)
+
+            if p < args.passes - 1 and args.gap > 0:
+                # Deliberate idle so repeats are separated by real time, not
+                # just by the length of a pass.
+                t_end = time.time() + args.gap
+                while time.time() < t_end:
+                    canvas[:] = (16, 16, 18)
+                    left = t_end - time.time()
+                    cv2.putText(canvas, "rest -- look wherever you like (%ds)"
+                                % int(left + 0.5),
+                                (30, H // 2), cv2.FONT_HERSHEY_SIMPLEX,
+                                1.0, (110, 110, 120), 2, cv2.LINE_AA)
+                    cv2.imshow(WIN, canvas)
+                    if (cv2.waitKey(30) & 0xFF) == ord("q"):
+                        print("aborted")
+                        return 1
+    finally:
+        cv2.destroyAllWindows()
+        cam.close()
+        be.close()
+
+    X = np.array(X)
+    tgt = np.array(tgt, dtype=np.float64)
+    pas = np.array(pas)
+    ts = np.array(ts)
+
+    # -- report ---------------------------------------------------------
+    # For each target, the spread BETWEEN passes is the repeatability noise.
+    # The spread BETWEEN targets is the signal we are trying to measure.
+    keys = {}
+    for i, t in enumerate(tgt):
+        keys.setdefault(tuple(t), []).append(i)
+
+    print("\n=== within-session repeatability")
+    print("  %d targets x %d passes, %.0f s total"
+          % (len(keys), args.passes, ts[-1]))
+    print("  %-10s %10s %10s %8s" % ("feature", "spread", "noise", "SNR"))
+
+    names = features.FEATURE_NAMES
+    snrs = {}
+    for j, nm in enumerate(names):
+        per_target = [X[idx, j] for idx in keys.values()]
+        # noise: sd within a target, pooled across targets
+        noise = float(np.sqrt(np.mean([np.var(v, ddof=1) for v in per_target
+                                       if len(v) > 1])))
+        # signal: sd of the per-target means
+        spread = float(np.std([np.mean(v) for v in per_target], ddof=1))
+        snr = spread / noise if noise > 1e-12 else float("inf")
+        snrs[nm] = snr
+        print("  %-10s %10.5f %10.5f %8.2f%s"
+              % (nm, spread, noise, snr, "  <--" if snr < 2.0 else ""))
+
+    iris = [snrs[n] for n in ("l_iris_x", "l_iris_y", "r_iris_x", "r_iris_y")]
+    print("\n  iris-feature SNR: min %.2f  mean %.2f" % (min(iris), np.mean(iris)))
+
+    # A low SNR only means "sensor ceiling" if the HEAD held still. If the
+    # subject turned to face each target, the eyes did less of the work: the
+    # iris signal shrinks and the head-pose variance grows, and the run
+    # measures posture, not the sensor. MEASURED 2026-08-18: exactly this
+    # happened -- seating moved 730 -> 442 mm, which should have INCREASED
+    # iris excursion by ~1.6x, and it fell 2-4x instead.
+    head_mm = {}
+    for j, nm, sc in ((7, "t_x", 100.0), (8, "t_y", 100.0), (9, "t_z", 1000.0)):
+        per_target = [X[idx, j] for idx in keys.values()]
+        head_mm[nm] = float(np.sqrt(np.mean(
+            [np.var(v, ddof=1) for v in per_target if len(v) > 1]))) * sc
+    worst_head = max(head_mm.values())
+    print("  head movement between repeats: "
+          + "  ".join("%s %.1f mm" % (k, v) for k, v in head_mm.items()))
+
+    if worst_head > 4.0:
+        print("\n  !! HEAD MOVED %.1f mm BETWEEN REPEATS -- verdict withheld."
+              % worst_head)
+        print("     This run measures posture as much as the sensor. Re-run on")
+        print("     a chin rest, at a FIXED distance matching the runs you want")
+        print("     to compare against, and only then read the SNR below.")
+    elif min(iris) < 2.0:
+        print("  -> AT OR NEAR THE SENSOR CEILING. The features do not repeat")
+        print("     much better than they vary across the whole screen, so a")
+        print("     better mapping cannot rescue accuracy. Design for ~5 deg,")
+        print("     or change the optics. See AUTOCAL.md.")
+    elif min(iris) < 5.0:
+        print("  -> marginal. Some headroom above the sensor, but not much;")
+        print("     expect calibration work to give incremental gains only.")
+    else:
+        print("  -> the sensor is NOT the limit. The error is in the mapping,")
+        print("     and better calibration is worth building.")
+
+    # Also report the same SNR with a linear head-pose term removed. If that
+    # rescues it, the coupling is head pose, not sensor noise.
+    Hm = np.column_stack([X[:, 4], X[:, 5], X[:, 6],
+                          X[:, 7], X[:, 8], X[:, 9], np.ones(len(X))])
+    print("\n  SNR with a linear head-pose term removed:")
+    for j, nm in ((0, "l_iris_x"), (1, "l_iris_y"),
+                  (2, "r_iris_x"), (3, "r_iris_y")):
+        beta = np.linalg.lstsq(Hm, X[:, j], rcond=None)[0]
+        res = X[:, j] - Hm @ beta
+        per_target = [res[idx] for idx in keys.values()]
+        n_ = np.sqrt(np.mean([np.var(v, ddof=1) for v in per_target
+                              if len(v) > 1]))
+        s_ = np.std([np.mean(v) for v in per_target], ddof=1)
+        print("    %-10s %.2f  (was %.2f)" % (nm, s_ / n_, snrs[nm]))
+
+    # Does repeatability decay with elapsed time (drift) or is it flat (noise)?
+    print("\n=== does it get worse with time?")
+    for j, nm in [(0, "l_iris_x"), (1, "l_iris_y")]:
+        gaps, diffs = [], []
+        for idx in keys.values():
+            for a in range(len(idx)):
+                for b in range(a + 1, len(idx)):
+                    gaps.append(abs(ts[idx[b]] - ts[idx[a]]))
+                    diffs.append(abs(X[idx[b], j] - X[idx[a], j]))
+        if len(gaps) > 2:
+            r = float(np.corrcoef(gaps, diffs)[0, 1])
+            print("  %-10s r(gap, disagreement) = %+.3f%s"
+                  % (nm, r, "   <- drift" if r > 0.3 else "   <- flat = noise"))
+
+    np.savez(args.out, X=X, tgt=tgt, pas=pas, ts=ts,
+             names=np.array(names), seed=np.array(seed))
+    print("\nsaved %s" % args.out)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

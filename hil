@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# Hardware-in-the-loop driver. Runs on the DEV MACHINE, not the board.
+#
+# Everything in bin/ runs on the UNO Q and needs its camera. This drives those
+# from here: sync the tree over, run a thing, bring the output back. The point
+# is that an edit-test cycle costs one command instead of a walk to the board.
+#
+#   ./hil check              board identity, deps, camera, governor
+#   ./hil push               rsync tree -> board (excludes junk, keeps results)
+#   ./hil run <cmd...>       run a command on the board, in the project dir
+#   ./hil raw <cmd...>       run a command on the board, from $HOME (pre-push)
+#   ./hil probe              push, then bin/probe
+#   ./hil bench [args...]    push, then bin/bench
+#   ./hil calibrate [args]   push, then bin/calibrate
+#   ./hil pull <remote> [local]   fetch a result file back
+#   ./hil shell              interactive ssh
+#   ./hil perf | ./hil powersave  CPU governor (see CLAUDE.md: powersave makes
+#                                 every fps number meaningless)
+#
+# Connection settings live in .hil.env (gitignored), written by `./hil init`:
+#   BOARD_USER=...
+#   BOARD_HOST=10.42.0.119
+set -uo pipefail
+
+cd "$(dirname "$0")"
+ENVFILE=.hil.env
+REMOTE_DIR="${REMOTE_DIR:-~/unoq-gaze-spike}"
+
+if [ -t 1 ]; then G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; D=$'\e[2m'; B=$'\e[1m'; N=$'\e[0m'
+else G=; R=; Y=; D=; B=; N=; fi
+hdr(){ printf '\n%s=== %s%s\n' "$B" "$1" "$N"; }
+ok(){   printf '  %sPASS%s %s\n' "$G" "$N" "$1"; }
+bad(){  printf '  %sFAIL%s %s\n' "$R" "$N" "$1"; }
+warn(){ printf '  %sWARN%s %s\n' "$Y" "$N" "$1"; }
+inf(){  printf '  %s     %s%s\n' "$D" "$1" "$N"; }
+die(){  printf '%serror:%s %s\n' "$R" "$N" "$1" >&2; exit 1; }
+
+# ------------------------------------------------------------------ config
+if [ -f "$ENVFILE" ]; then . "$ENVFILE"; fi
+BOARD_USER="${BOARD_USER:-}"
+BOARD_HOST="${BOARD_HOST:-10.42.0.119}"
+
+# Multiplex over one connection. Without this every `hil run` pays a fresh TCP
+# + SSH handshake, which is most of the latency of a short command.
+CTL=/tmp/hil-%r@%h:%p
+SSHOPTS=(-o ControlMaster=auto -o "ControlPath=$CTL" -o ControlPersist=120
+         -o ConnectTimeout=8 -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
+
+need_target(){
+  [ -n "$BOARD_USER" ] || die "no BOARD_USER. Run: ./hil init <user> [host]"
+  TARGET="$BOARD_USER@$BOARD_HOST"
+}
+
+# Run a command on the board. Quoted so the remote shell sees it intact.
+# NOTE: a non-login ssh shell omits /usr/sbin:/sbin, so swapon, v4l2-ctl and
+# friends silently vanish. Put them back rather than discovering it per-command.
+RPATH='export PATH="$PATH:/usr/sbin:/sbin";'
+rsh(){ need_target; ssh "${SSHOPTS[@]}" "$TARGET" "$RPATH $*"; }
+
+# Same, but cd'd into the project dir first. Fails loudly rather than running the
+# command in $HOME, which is how you end up with half a project tree in ~.
+rsh_proj(){
+  need_target
+  ssh "${SSHOPTS[@]}" "$TARGET" \
+    "$RPATH cd $REMOTE_DIR 2>/dev/null || { echo 'hil: $REMOTE_DIR not on the board — run ./hil push' >&2; exit 3; }; $*"
+}
+
+# ------------------------------------------------------------------- init
+cmd_init(){
+  [ $# -ge 1 ] || die "usage: ./hil init <user> [host]"
+  printf 'BOARD_USER=%s\nBOARD_HOST=%s\n' "$1" "${2:-$BOARD_HOST}" > "$ENVFILE"
+  ok "wrote $ENVFILE"
+  cat "$ENVFILE" | sed 's/^/       /'
+  echo
+  inf "next: ./hil check"
+}
+
+# ------------------------------------------------------------------ check
+# Deliberately overlaps bring-up.sh. That script is the authority once the tree
+# is on the board; this is the smaller check that tells us whether it is even
+# worth pushing, and it must work on a board with nothing installed.
+cmd_check(){
+  need_target
+  hdr "link"
+  if ping -c 2 -W 2 "$BOARD_HOST" >/dev/null 2>&1; then
+    ok "$BOARD_HOST responds to ping"
+  else
+    bad "$BOARD_HOST does not respond to ping"; exit 1
+  fi
+  if rsh true 2>/dev/null; then
+    ok "ssh as $BOARD_USER (key auth)"
+  else
+    bad "ssh to $TARGET failed"
+    inf "on the board:  sudo apt install -y openssh-server && sudo systemctl enable --now ssh"
+    inf "then here:     ssh-copy-id $TARGET"
+    exit 1
+  fi
+
+  hdr "board"
+  local arch; arch=$(rsh 'uname -m' 2>/dev/null)
+  inf "arch      $arch"
+  [ "$arch" = "aarch64" ] && ok "aarch64" || warn "expected aarch64, got '$arch'"
+  inf "kernel    $(rsh 'uname -r')"
+  inf "os        $(rsh '. /etc/os-release 2>/dev/null; echo "$PRETTY_NAME"')"
+  inf "cpus      $(rsh 'nproc')"
+  inf "memory    $(rsh "awk '/MemTotal/{printf \"%d MB\", \$2/1024}' /proc/meminfo")"
+  inf "rootfs    $(rsh "df -h / | awk 'NR==2{print \$4\" free of \"\$2}'")"
+  inf "swap      $(rsh 'swapon --show=SIZE --noheadings 2>/dev/null | tr "\n" " "' || echo none)"
+  inf "uptime    $(rsh 'uptime -p 2>/dev/null')"
+
+  hdr "runtime"
+  local mp; mp=$(rsh 'python3 -c "import mediapipe;print(mediapipe.__version__)" 2>&1 | tail -1')
+  case "$mp" in
+    1.*|2.*) ok "mediapipe $mp" ;;
+    0.*)     bad "mediapipe $mp — below the 1.0.0 pin, no aarch64 wheel (see CLAUDE.md)" ;;
+    *)       warn "mediapipe not importable: $mp" ;;
+  esac
+  inf "python    $(rsh 'python3 --version 2>&1')"
+  inf "glibc     $(rsh 'ldd --version 2>/dev/null | head -1 | grep -oE "[0-9]+\.[0-9]+$"')"
+
+  hdr "camera"
+  local vids; vids=$(rsh 'ls /dev/video* 2>/dev/null | tr "\n" " "')
+  if [ -n "$vids" ]; then
+    ok "video nodes: $vids"
+    rsh 'v4l2-ctl --list-devices 2>/dev/null' | sed 's/^/       /' || inf "v4l-utils not installed"
+  else
+    bad "no /dev/video* — check hub power, and that the camera is on a USB-A port"
+  fi
+
+  hdr "governor"
+  local gov; gov=$(rsh 'cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null')
+  if [ "$gov" = "performance" ]; then ok "governor performance"
+  else warn "governor '$gov' — benchmark numbers are meaningless. Fix: ./hil perf"; fi
+
+  hdr "project"
+  if rsh "test -d $REMOTE_DIR"; then
+    ok "$REMOTE_DIR exists"
+    inf "model     $(rsh "ls -la $REMOTE_DIR/models/face_landmarker.task 2>/dev/null | awk '{print \$5\" bytes\"}'" || echo 'ABSENT')"
+  else
+    warn "$REMOTE_DIR not present — run ./hil push"
+  fi
+}
+
+# ------------------------------------------------------------------- push
+cmd_push(){
+  need_target
+  if ! command -v rsync >/dev/null || ! rsh 'command -v rsync' >/dev/null 2>&1; then
+    warn "rsync missing on one side; falling back to tar-over-ssh"
+    tar --exclude=.git --exclude=__pycache__ --exclude='*.pyc' \
+        --exclude=.pytest_cache --exclude=.venv --exclude=.hil.env -czf - . \
+      | rsh "mkdir -p $REMOTE_DIR && tar -xzf - -C $REMOTE_DIR" \
+      && ok "pushed (tar)" || bad "push failed"
+    return
+  fi
+  # NOTE: no --delete. Measurement output on the board (npz, bench json) is
+  # irreplaceable per CLAUDE.md; a mirroring sync would eat it.
+  rsync -az --info=stats1 \
+    -e "ssh ${SSHOPTS[*]}" \
+    --exclude='.git/' --exclude='__pycache__/' --exclude='*.pyc' \
+    --exclude='.pytest_cache/' --exclude='.venv/' --exclude='.hil.env' \
+    ./ "$TARGET:$REMOTE_DIR/" && ok "pushed to $TARGET:$REMOTE_DIR" || bad "rsync failed"
+  rsh "chmod +x $REMOTE_DIR/bin/* $REMOTE_DIR/*.sh $REMOTE_DIR/hil 2>/dev/null" || true
+}
+
+cmd_pull(){
+  need_target
+  [ $# -ge 1 ] || die "usage: ./hil pull <remote-path> [local-path]"
+  scp "${SSHOPTS[@]}" "$TARGET:$REMOTE_DIR/$1" "${2:-.}" && ok "pulled $1"
+}
+
+# -------------------------------------------------------------------- run
+cmd_run(){ [ $# -ge 1 ] || die "usage: ./hil run <command...>"; rsh_proj "$@"; }
+
+# Like run, but from $HOME — for bring-up work that happens before the tree is
+# pushed, and for anything that has no business caring where the project lives.
+cmd_raw(){ [ $# -ge 1 ] || die "usage: ./hil raw <command...>"; rsh "$@"; }
+
+cmd_perf(){
+  rsh 'for c in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+         echo performance | sudo tee $c >/dev/null; done;
+       cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor' \
+    && ok "governor set to performance"
+}
+cmd_powersave(){
+  rsh 'for c in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+         echo powersave | sudo tee $c >/dev/null; done' && ok "governor powersave"
+}
+
+cmd_shell(){ need_target; ssh -o "ControlPath=$CTL" -o ControlMaster=auto -t "$TARGET" "cd $REMOTE_DIR && exec \$SHELL -l"; }
+
+# ------------------------------------------------------------------- main
+SUB="${1:-help}"; shift || true
+case "$SUB" in
+  init)      cmd_init "$@" ;;
+  check)     cmd_check ;;
+  push)      cmd_push ;;
+  pull)      cmd_pull "$@" ;;
+  run)       cmd_run "$@" ;;
+  raw)       cmd_raw "$@" ;;
+  bringup)   cmd_push; rsh_proj "bash bring-up.sh ${*:-}" ;;
+  setup)     cmd_push; rsh_proj "./setup.sh" ;;
+  probe)     cmd_push; rsh_proj "./bin/probe $*" ;;
+  bench)     cmd_push; rsh_proj "./bin/bench $*" ;;
+  calibrate) cmd_push; rsh_proj "./bin/calibrate $*" ;;
+  test)      cmd_push; rsh_proj "python3 -m pytest tests/ -q" ;;
+  perf)      cmd_perf ;;
+  powersave) cmd_powersave ;;
+  shell)     cmd_shell ;;
+  help|-h|--help)
+    awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0" ;;
+  *) die "unknown subcommand '$SUB' (try ./hil help)" ;;
+esac

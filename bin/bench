@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""STEP 2. Measure what the board actually does. Do not trust anyone's estimate.
+
+Sweeps inference input resolution and reports fps and per-stage latency for
+each. The point is the tradeoff curve: smaller input is faster but puts fewer
+pixels on the iris, and only measurement tells you where the knee is on YOUR
+board with YOUR camera and YOUR lighting.
+
+Sit in front of the camera the way the user will sit. A sweep run against an
+empty room measures the detector's failure path, not the pipeline.
+
+  bin/bench --sweep                 320/480/640 comparison, 200 frames each
+  bin/bench --input-size 480 -n 600 one configuration, longer run
+  bin/bench --sweep --save bench.json
+"""
+
+import argparse
+import json
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import cv2
+import numpy as np
+
+from spike import backends, camera, config, features, metrics
+
+
+def resize_for_inference(frame_bgr, size):
+    """Downscale the long edge to `size`, preserving aspect.
+
+    Capture wide and downscale here rather than capturing small: the C920's
+    78 deg lens wastes most of its sensor on the room, so the pixels you want
+    only exist if you asked the sensor for them.
+    """
+    h, w = frame_bgr.shape[:2]
+    s = float(size) / max(h, w)
+    if s < 1.0:
+        frame_bgr = cv2.resize(frame_bgr, (int(round(w * s)), int(round(h * s))),
+                               interpolation=cv2.INTER_AREA)
+    return cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+
+
+def run_one(cam, be, size, n_frames, cfg, verbose=True):
+    timer = metrics.Timer()
+    stamps = []
+    found = 0
+    blinks = 0
+    dists = []
+
+    # Discard the first few: first inference includes lazy graph setup and is
+    # not representative of steady state.
+    for _ in range(5):
+        f = cam.read()
+        if f is not None:
+            be.detect(resize_for_inference(f, size))
+
+    t_start = time.perf_counter()
+    for i in range(n_frames):
+        t0 = time.perf_counter()
+        frame = cam.read()
+        if frame is None:
+            continue
+        t1 = time.perf_counter()
+        rgb = resize_for_inference(frame, size)
+        t2 = time.perf_counter()
+
+        res = be.detect(rgb)
+        t3 = time.perf_counter()
+
+        timer.add("capture_ms", (t1 - t0) * 1000.0)
+        timer.add("resize_ms", (t2 - t1) * 1000.0)
+        timer.add_all(res.timings)
+
+        if res.ok:
+            found += 1
+            try:
+                feat, diag = features.extract(
+                    res.landmarks, rgb.shape[1], rgb.shape[0])
+                t4 = time.perf_counter()
+                timer.add("features_ms", (t4 - t3) * 1000.0)
+                dists.append(diag["distance_mm"])
+                if features.is_blinking(
+                        diag, cfg["inference"]["blink_ear_threshold"]):
+                    blinks += 1
+            except Exception as e:
+                if verbose and i == 0:
+                    print("    feature extraction failed: %s" % e)
+        timer.add("total_ms", (time.perf_counter() - t0) * 1000.0)
+        stamps.append(time.perf_counter())
+
+    wall = time.perf_counter() - t_start
+    f = metrics.fps_stats(stamps)
+    return {
+        "input_size": size,
+        "frames": len(stamps),
+        "wall_s": wall,
+        "detect_rate": found / float(max(len(stamps), 1)),
+        "blink_rate": blinks / float(max(found, 1)),
+        "median_distance_mm": float(np.median(dists)) if dists else None,
+        "fps": f,
+        "timings": timer.summary(),
+        "_timer": timer,
+    }
+
+
+def print_result(r):
+    print("\n  input_size=%d  frames=%d  wall=%.1fs"
+          % (r["input_size"], r["frames"], r["wall_s"]))
+    print("  fps    mean %.1f   p50 %.1f   p5(slow tail) %.1f"
+          % (r["fps"]["fps_mean"], r["fps"].get("fps_p50", 0),
+             r["fps"]["fps_p5"]))
+    print("  face detected on %.0f%% of frames" % (100 * r["detect_rate"]))
+    if r["median_distance_mm"]:
+        print("  median face distance %.0f mm" % r["median_distance_mm"])
+    print(r["_timer"].report("stage"))
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", default=None)
+    ap.add_argument("--sweep", action="store_true",
+                    help="compare 320/480/640 inference input")
+    ap.add_argument("--input-size", type=int, default=None)
+    ap.add_argument("-n", "--frames", type=int, default=200)
+    ap.add_argument("--save", default=None)
+    args = ap.parse_args()
+
+    cfg = config.load(args.config)
+    sizes = ([320, 480, 640] if args.sweep
+             else [args.input_size or cfg["inference"]["input_size"]])
+
+    c = cfg["camera"]
+    print("opening %s at %dx%d %s ..."
+          % (c["device"], c["width"], c["height"], c["fourcc"]))
+    cam = camera.Camera(c["device"], c["width"], c["height"], c["fps"],
+                        c["fourcc"], c["exposure"], c["focus"],
+                        c["gain"]).open()
+    print(cam.control_report())
+    if not cam.all_verified():
+        print("  !! controls did not stick -- numbers below will be noisier "
+              "than they should be. Fix this first.")
+
+    be = backends.create(prefer=cfg["inference"]["backend"],
+                         num_threads=cfg["inference"].get("num_threads", 4))
+    print("backend: %s%s\n" % (be.name,
+                               "" if be.verified else "  (UNVERIFIED PATH)"))
+
+    # Warm up before the first measured size. The interpreter allocates its
+    # XNNPACK thread pool and touches its weights on the first few invocations,
+    # and without this that cost lands entirely on whichever input_size happens
+    # to be measured first -- which showed up as 320 being "slower" than 480,
+    # a result that is not physical and sent us looking for a cause that did
+    # not exist.
+    print("--- warmup")
+    run_one(cam, be, sizes[0], min(40, args.frames), cfg)
+
+    results = []
+    try:
+        for s in sizes:
+            print("--- benchmarking input_size=%d" % s)
+            r = run_one(cam, be, s, args.frames, cfg)
+            print_result(r)
+            results.append(r)
+    finally:
+        cam.close()
+        be.close()
+
+    if len(results) > 1:
+        print("\n=== summary")
+        print("  %-10s %8s %8s %10s" % ("input", "fps p50", "fps p5", "detect%"))
+        for r in results:
+            print("  %-10d %8.1f %8.1f %9.0f%%"
+                  % (r["input_size"], r["fps"].get("fps_p50", 0),
+                     r["fps"]["fps_p5"], 100 * r["detect_rate"]))
+        print("\n  Pick the largest input size whose p5 fps stays above ~15.")
+        print("  Below that the cursor starts to feel like it is lagging you,")
+        print("  and no amount of filter tuning hides it.")
+
+    if args.save:
+        with open(args.save, "w") as f:
+            json.dump([{k: v for k, v in r.items() if k != "_timer"}
+                       for r in results], f, indent=2)
+        print("\nwrote %s" % args.save)
+
+
+if __name__ == "__main__":
+    main()

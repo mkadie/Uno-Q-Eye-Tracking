@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""STEP 1b. Verify the backend against a real face, and pick `focus`.
+
+Two jobs, one sitting, because both need a person in the chair and neither is
+worth asking for twice.
+
+  1. VERIFY. Everything downstream -- features, calibration, every number in
+     RESULTS.md -- assumes the backend returns 478 landmarks in the right place.
+     On the LiteRT path that code has never been executed against a face:
+     anchor decode, NMS, ROI alignment and the un-rotation back to frame
+     coordinates are all unexercised. This exercises them and checks the
+     result against face geometry that must hold for any real face.
+
+  2. FOCUS. PLAN.md asks for a focus_absolute sweep with the user seated,
+     keeping the value where the iris edge is crispest. Judging that by eye on
+     an HDMI preview is guesswork; measuring the gradient energy inside the
+     detected iris region is not. The camera is the only instrument here that
+     can be objectively tuned before the measurements start, so tune it.
+
+  bin/facecheck                       sweep focus, verify, recommend a value
+  bin/facecheck --no-sweep            verify only, at the configured focus
+  bin/facecheck --save ref_frames.npz keep frames for offline iteration
+
+Sit as you will sit for the real runs. A verification pass at a distance you
+will not use validates a geometry you will not use.
+"""
+
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import cv2
+import numpy as np
+
+from spike import backends, camera, config
+
+# MediaPipe FaceMesh indices. The iris ring only exists in the 478-point
+# refined model -- 468..472 right, 473..477 left. Their presence is itself a
+# check that we are reading the refined output and not a 468-point subset.
+# 468 and 473 are the iris CENTRES; the four points after each are the ring.
+# Treating all five as ring points yields a coefficient of variation of exactly
+# 0.5 for a perfectly circular iris (mean 0.8r, std 0.4r) -- which looks like a
+# broken backend and is not.
+R_IRIS_C, R_IRIS_RING = 468, list(range(469, 473))
+L_IRIS_C, L_IRIS_RING = 473, list(range(474, 478))
+R_IRIS = [R_IRIS_C] + R_IRIS_RING
+L_IRIS = [L_IRIS_C] + L_IRIS_RING
+R_EYE_CORNERS = (33, 133)
+L_EYE_CORNERS = (362, 263)
+NOSE_TIP = 1
+CHIN = 152
+FOREHEAD = 10
+
+
+def iris_sharpness(gray, centre_px, radius_px):
+    """Gradient energy in the iris neighbourhood.
+
+    Variance of the Laplacian is the standard focus metric, but taken over a
+    whole frame it mostly measures the bookshelf behind the user. Restricting
+    it to the iris measures the thing that actually has to be sharp.
+    """
+    r = max(6, int(radius_px * 2.5))
+    x, y = int(centre_px[0]), int(centre_px[1])
+    h, w = gray.shape[:2]
+    x0, x1 = max(0, x - r), min(w, x + r)
+    y0, y1 = max(0, y - r), min(h, y + r)
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        return 0.0
+    patch = gray[y0:y1, x0:x1]
+    return float(cv2.Laplacian(patch, cv2.CV_64F).var())
+
+
+def geometry_checks(lm, w, h):
+    """Assertions that hold for any real, upright, forward-facing face.
+
+    These catch the failure this backend is most likely to have: landmarks
+    that are individually plausible but collectively wrong, because the ROI
+    was aligned or un-rotated incorrectly. A crop mapped back with a bad
+    inverse still yields 478 points in [0,1]; it does not yield 478 points
+    arranged like a face.
+    """
+    out = []
+    px = lm[:, :2] * np.array([w, h])
+
+    inb = np.mean((lm[:, 0] >= -0.05) & (lm[:, 0] <= 1.05) &
+                  (lm[:, 1] >= -0.05) & (lm[:, 1] <= 1.05))
+    out.append(("landmarks inside frame", inb > 0.98, "%.1f%%" % (inb * 100)))
+
+    out.append(("478 landmarks (refined, has iris)", lm.shape[0] == 478,
+                str(lm.shape[0])))
+
+    # Eyes above nose, nose above chin, in image coords (y grows downward).
+    eye_y = px[[*R_EYE_CORNERS, *L_EYE_CORNERS], 1].mean()
+    out.append(("eyes above nose tip", eye_y < px[NOSE_TIP, 1],
+                "eye y=%.0f nose y=%.0f" % (eye_y, px[NOSE_TIP, 1])))
+    out.append(("nose above chin", px[NOSE_TIP, 1] < px[CHIN, 1],
+                "nose y=%.0f chin y=%.0f" % (px[NOSE_TIP, 1], px[CHIN, 1])))
+    out.append(("forehead above eyes", px[FOREHEAD, 1] < eye_y,
+                "brow y=%.0f" % px[FOREHEAD, 1]))
+
+    # Right eye is at smaller x than left eye in a mirrored webcam view; the
+    # ordering must at least be consistent and the eyes separated.
+    r_c = px[R_IRIS_C]
+    l_c = px[L_IRIS_C]
+    sep = float(np.linalg.norm(l_c - r_c))
+    face_h = float(px[CHIN, 1] - px[FOREHEAD, 1])
+    ratio = sep / max(face_h, 1e-6)
+    out.append(("interocular / face height in 0.30-0.75", 0.30 < ratio < 0.75,
+                "%.3f" % ratio))
+
+    # Each iris ring should be roughly circular and small relative to the eye.
+    for nm, ctr, ring, corners in (("right", R_IRIS_C, R_IRIS_RING, R_EYE_CORNERS),
+                                   ("left", L_IRIS_C, L_IRIS_RING, L_EYE_CORNERS)):
+        c = px[ctr]
+        rad = np.linalg.norm(px[ring] - c, axis=1)
+        eye_w = float(np.linalg.norm(px[corners[0]] - px[corners[1]]))
+        circ = rad.std() / max(rad.mean(), 1e-6)
+        out.append(("%s iris ring circular (cv<0.25)" % nm, circ < 0.25,
+                    "%.3f" % circ))
+        frac = (2 * rad.mean()) / max(eye_w, 1e-6)
+        out.append(("%s iris diameter / eye width in 0.25-0.95" % nm,
+                    0.25 < frac < 0.95, "%.3f" % frac))
+    iris_r = float(np.mean([
+        np.linalg.norm(px[R_IRIS_RING] - px[R_IRIS_C], axis=1).mean(),
+        np.linalg.norm(px[L_IRIS_RING] - px[L_IRIS_C], axis=1).mean()]))
+    return out, r_c, l_c, iris_r
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", default="config.toml")
+    ap.add_argument("--no-sweep", action="store_true",
+                    help="skip the focus sweep, verify at the configured value")
+    ap.add_argument("--step", type=int, default=10, help="focus sweep step")
+    ap.add_argument("--frames", type=int, default=5,
+                    help="frames averaged per focus value")
+    ap.add_argument("--save", default=None, help="write reference frames to .npz")
+    args = ap.parse_args()
+
+    cfg = config.load(args.config)
+    cam_cfg = cfg.get("camera", {})
+    dev = cam_cfg.get("device", "/dev/video0")
+
+    print("=== backend")
+    be = backends.create()
+    print("  %s  (verified=%s)  landmark input %dx%d"
+          % (be.name, getattr(be, "verified", "?"),
+             getattr(be, "lm_size", 0), getattr(be, "lm_size", 0)))
+
+    cam = camera.Camera(device=dev,
+                        width=cam_cfg.get("width", 1920),
+                        height=cam_cfg.get("height", 1080),
+                        fps=cam_cfg.get("fps", 30),
+                        fourcc=cam_cfg.get("fourcc", "MJPG"),
+                        exposure=cam_cfg.get("exposure"),
+                        focus=cam_cfg.get("focus"),
+                        gain=cam_cfg.get("gain"),
+                        warmup_frames=cam_cfg.get("warmup_frames", 8))
+    cam.open()
+    if not cam.all_verified():
+        print("  WARN some controls did not stick; see bin/probe")
+
+    focus_values = ([cam_cfg.get("focus", 40)] if args.no_sweep
+                    else list(range(0, 101, args.step)))
+    results = []
+    saved = {}
+
+    print("\n=== focus sweep (sit still, look at the camera)")
+    print("  %-7s %-7s %-10s %s" % ("focus", "found", "sharpness", "iris px"))
+    for fv in focus_values:
+        camera.set_control(dev, "focus_absolute", fv)
+        for _ in range(4):
+            cam.read()                       # let the lens settle
+        sharp, rads, hits, last = [], [], 0, None
+        for _ in range(args.frames):
+            frame = cam.read()
+            if frame is None:
+                continue
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            res = be.detect(rgb)
+            if not res.ok:
+                continue
+            hits += 1
+            last = (frame, res.landmarks)
+            h, w = frame.shape[:2]
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            px = res.landmarks[:, :2] * np.array([w, h])
+            for ctr, ring in ((R_IRIS_C, R_IRIS_RING), (L_IRIS_C, L_IRIS_RING)):
+                c = px[ctr]
+                rad = np.linalg.norm(px[ring] - c, axis=1).mean()
+                sharp.append(iris_sharpness(gray, c, rad))
+                rads.append(rad)
+        s = float(np.mean(sharp)) if sharp else 0.0
+        r = float(np.mean(rads)) if rads else 0.0
+        results.append((fv, hits, s, r))
+        print("  %-7d %-7s %-10.1f %.1f"
+              % (fv, "%d/%d" % (hits, args.frames), s, r))
+        if last is not None and args.save:
+            saved["frame_%03d" % fv] = last[0]
+            saved["lm_%03d" % fv] = last[1]
+
+    usable = [r for r in results if r[1] > 0]
+    if not usable:
+        print("\n  FAIL no face detected at any focus value.")
+        print("  Before blaming the backend: is the face in frame, is the room")
+        print("  lit, and does bin/probe still report controls verified?")
+        cam.close()
+        return 2
+
+    best = max(usable, key=lambda r: r[2])
+    print("\n=== recommendation")
+    print("  focus_absolute = %d   (sharpness %.1f, iris radius %.1f px)"
+          % (best[0], best[2], best[3]))
+    print("  put that in config.toml [camera] focus")
+
+    # Verify against the best frame we have.
+    print("\n=== geometry verification at focus=%d" % best[0])
+    camera.set_control(dev, "focus_absolute", best[0])
+    for _ in range(6):
+        cam.read()
+    frame = cam.read()
+    if frame is None:
+        print("  FAIL camera returned no frame")
+        cam.close()
+        return 2
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    res = be.detect(rgb)
+    if not res.ok:
+        print("  FAIL no face on the verification frame")
+        cam.close()
+        return 2
+    h, w = frame.shape[:2]
+    checks, r_c, l_c, iris_r = geometry_checks(res.landmarks, w, h)
+    npass = 0
+    for name, good, detail in checks:
+        print("  %-4s %-42s %s" % ("OK" if good else "FAIL", name, detail))
+        npass += bool(good)
+    print("\n  score %.3f   detect %.1f ms  landmark %.1f ms  total %.1f ms"
+          % (res.score, res.timings.get("detect_ms", 0),
+             res.timings.get("landmark_ms", 0), res.timings.get("infer_ms", 0)))
+    print("  iris radius %.1f px  --  this is the resolution the whole project"
+          % iris_r)
+    print("  rests on; under ~5 px, consider a narrower lens (PLAN.md path C)")
+
+    if args.save:
+        saved["verify_frame"] = frame
+        saved["verify_lm"] = res.landmarks
+        np.savez_compressed(args.save, **saved)
+        print("\n  saved %d arrays to %s" % (len(saved), args.save))
+
+    cam.close()
+    allgood = npass == len(checks)
+    print("\n=== verdict")
+    print("  %s  (%d/%d geometry checks)"
+          % ("BACKEND VERIFIED against a real face" if allgood
+             else "BACKEND SUSPECT -- see failures above", npass, len(checks)))
+    return 0 if allgood else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

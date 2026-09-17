@@ -1,0 +1,22 @@
+# mediapipe 1.0.0 is the first release shipping a manylinux_2_28_aarch64
+# wheel. Do not relax this pin downward on the UNO Q -- 0.10.x has no ARM64
+# Linux wheel and pip will fall through to a source build you do not want.
+mediapipe>=1.0.0
+
+# Contingency inference path, used only if the mediapipe wheel misbehaves on
+# this particular Debian. Also ships aarch64 wheels, so neither path requires
+# a Bazel build.
+ai-edge-litert>=2.1.6
+
+numpy>=1.24
+
+# Full opencv, NOT headless: bin/calibrate draws its target grid with
+# cv2.imshow on the HDMI output. If you only ever run probe/bench you can swap
+# this for opencv-python-headless and save a chunk of resident set.
+opencv-python>=4.8
+
+pyserial>=3.5
+tomli>=2.0; python_version < "3.11"
+
+# dev
+pytest>=7.4

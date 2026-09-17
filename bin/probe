@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""STEP 1. Run this first, on the board, before writing any other code.
+
+Answers one question: is this project on the easy path or the hard path?
+
+It checks, in order: platform and glibc, which inference runtimes import,
+whether the model bundle is present, whether a real inference actually runs,
+which camera devices exist and what formats they offer, and -- the one that
+bites people -- whether v4l2 control locking survives stream start.
+
+Exit code 0 means go. Non-zero means fix something before continuing.
+"""
+
+import os
+import platform
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import numpy as np
+
+from spike import backends, camera, config
+
+GREEN, RED, YELLOW, DIM, RESET = (
+    "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[0m")
+if not sys.stdout.isatty():
+    GREEN = RED = YELLOW = DIM = RESET = ""
+
+_fail = []
+_warn = []
+
+
+def hdr(t):
+    print("\n%s=== %s%s" % ("\033[1m" if RESET else "", t, RESET))
+
+
+def ok(m):
+    print("  %sPASS%s %s" % (GREEN, RESET, m))
+
+
+def bad(m):
+    print("  %sFAIL%s %s" % (RED, RESET, m))
+    _fail.append(m)
+
+
+def warn(m):
+    print("  %sWARN%s %s" % (YELLOW, RESET, m))
+    _warn.append(m)
+
+
+def info(m):
+    print("  %s     %s%s" % (DIM, m, RESET))
+
+
+def check_platform():
+    hdr("platform")
+    mach = platform.machine()
+    info("machine        %s" % mach)
+    info("python         %s" % platform.python_version())
+    try:
+        libc, ver = platform.libc_ver()
+        info("libc           %s %s" % (libc, ver))
+        if libc == "glibc" and ver:
+            major, minor = (int(x) for x in ver.split(".")[:2])
+            if (major, minor) >= (2, 28):
+                ok("glibc %s satisfies manylinux_2_28 (mediapipe aarch64 wheel)"
+                   % ver)
+            else:
+                bad("glibc %s < 2.28 -- the mediapipe aarch64 wheel will not "
+                    "install. This is the hard path." % ver)
+    except Exception as e:
+        warn("could not determine libc: %s" % e)
+
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal"):
+                    kb = int(line.split()[1])
+                    gb = kb / 1048576.0
+                    info("memory         %.2f GB usable" % gb)
+                    if gb < 1.9:
+                        warn("under 2GB usable -- expect pressure once the GUI "
+                             "runs alongside the vision pipeline")
+                    break
+    except Exception:
+        pass
+
+    try:
+        out = subprocess.run(["df", "-h", "/"], capture_output=True,
+                             text=True, timeout=5).stdout.splitlines()
+        if len(out) > 1:
+            info("rootfs         %s" % " ".join(out[1].split()[1:5]))
+    except Exception:
+        pass
+
+    info("cpu count      %s" % os.cpu_count())
+
+
+def check_runtimes():
+    hdr("inference runtimes")
+    avail = backends.available()
+    for name, status in sorted(avail.items()):
+        if str(status).startswith("UNAVAILABLE"):
+            info("%-18s %s" % (name, status))
+        else:
+            ok("%-18s %s" % (name, status))
+
+    if str(avail.get("mediapipe", "")).startswith("UNAVAILABLE"):
+        if all(str(v).startswith("UNAVAILABLE") for v in avail.values()):
+            bad("no inference runtime at all -- run setup.sh")
+        else:
+            warn("mediapipe missing; you are on the LiteRT contingency path. "
+                 "Note that backend is UNVERIFIED -- budget debugging time.")
+    else:
+        ok("primary path available (mediapipe)")
+
+
+def check_model():
+    hdr("model bundle")
+    p = backends.DEFAULT_TASK
+    if os.path.exists(p):
+        ok("face_landmarker.task present (%.1f MB)"
+           % (os.path.getsize(p) / 1e6))
+        return True
+    bad("missing %s -- run setup.sh" % p)
+    return False
+
+
+def check_inference(have_model):
+    hdr("live inference")
+    if not have_model:
+        info("skipped (no model)")
+        return
+    try:
+        be = backends.create()
+    except Exception as e:
+        bad("backend construction failed: %s" % e)
+        return
+    info("backend        %s%s" % (be.name,
+                                  "" if be.verified else " (UNVERIFIED PATH)"))
+    # Synthetic frame: proves the graph executes end to end. It will not find
+    # a face in noise, and that is fine -- we are testing that invoke() works,
+    # not that detection works. Point it at a real face with bin/bench.
+    frame = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+    try:
+        res = be.detect(frame)
+        ms = res.timings.get("infer_ms", 0.0)
+        ok("inference ran without error (%.1f ms on a 640x480 noise frame)" % ms)
+        info("face found     %s (expected False on noise)" % res.ok)
+        if ms > 200:
+            warn("%.0f ms per frame is under 5 fps. Check that you are not "
+                 "running a debug build and that CPU governor is not "
+                 "powersave." % ms)
+    except Exception as e:
+        bad("inference raised: %s" % e)
+    finally:
+        be.close()
+
+
+def check_cameras():
+    hdr("cameras")
+    devs = sorted(d for d in os.listdir("/dev") if d.startswith("video"))
+    if not devs:
+        bad("no /dev/video* -- is the camera plugged into the hub and the hub "
+            "powered?")
+        return None
+    info("devices        %s" % ", ".join(devs))
+
+    chosen = None
+    for d in devs:
+        path = "/dev/" + d
+        fmts = camera.list_formats(path)
+        if "MJPG" in fmts or "Motion-JPEG" in fmts:
+            ok("%s offers MJPEG" % path)
+            if chosen is None:
+                chosen = path
+        elif fmts:
+            info("%s no MJPEG (capture-only node or metadata node)" % path)
+    if chosen is None:
+        bad("no device offers MJPEG. At 1080p30 YUYV exceeds USB 2.0 "
+            "bandwidth; you need MJPEG.")
+    return chosen
+
+
+def check_controls(dev, cfg):
+    hdr("v4l2 control locking (the C920 trap)")
+    if dev is None:
+        info("skipped (no camera)")
+        return
+    ctrls = camera.list_controls(dev)
+    if not ctrls:
+        warn("v4l2-ctl produced nothing -- install v4l-utils")
+        return
+
+    for logical in ("auto_exposure", "exposure_time_absolute",
+                    "focus_automatic_continuous", "focus_absolute"):
+        name = camera.resolve_name(logical, ctrls)
+        if name:
+            info("%-30s -> %s" % (logical, name))
+        else:
+            warn("%s: no equivalent control exposed" % logical)
+
+    c = cfg["camera"]
+    try:
+        cam = camera.Camera(dev, c["width"], c["height"], c["fps"],
+                            c["fourcc"], c["exposure"], c["focus"], c["gain"])
+        cam.open()
+        frame = cam.read()
+        if frame is None:
+            bad("opened %s but read() returned nothing" % dev)
+        else:
+            ok("captured %dx%d" % (frame.shape[1], frame.shape[0]))
+            if (frame.shape[1], frame.shape[0]) != (c["width"], c["height"]):
+                warn("driver gave %dx%d, not the requested %dx%d -- it "
+                     "silently renegotiated"
+                     % (frame.shape[1], frame.shape[0], c["width"], c["height"]))
+        print(cam.control_report())
+        if cam.all_verified():
+            ok("all controls survived stream start")
+        else:
+            bad("controls did NOT stick. This is the C920 STREAMON reset. "
+                "Controls must be applied AFTER streaming begins -- if this "
+                "fails even with the post-warmup ordering used here, increase "
+                "camera.warmup_frames.")
+        cam.close()
+    except Exception as e:
+        bad("camera open failed: %s" % e)
+
+
+def main():
+    cfg = config.load()
+    print("UNO Q gaze spike -- environment probe")
+    check_platform()
+    check_runtimes()
+    have_model = check_model()
+    check_inference(have_model)
+    dev = check_cameras()
+    check_controls(dev, cfg)
+
+    hdr("verdict")
+    if _fail:
+        print("  %s%d blocking issue(s)%s" % (RED, len(_fail), RESET))
+        for m in _fail:
+            print("    - %s" % m)
+        return 1
+    if _warn:
+        print("  %sclear to proceed, %d warning(s)%s"
+              % (YELLOW, len(_warn), RESET))
+        for m in _warn:
+            print("    - %s" % m)
+        return 0
+    print("  %severything green -- you are on the easy path%s" % (GREEN, RESET))
+    print("  next: bin/bench --sweep    then    bin/calibrate")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

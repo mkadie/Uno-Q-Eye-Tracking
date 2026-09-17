@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""STEP 3. Calibrate, then measure accuracy in degrees of visual angle.
+
+Degrees, not pixels. Pixel error is meaningless without screen size and
+viewing distance, and "percent of screen" is worse. Reporting in degrees lets
+you compare against published numbers: commercial remote trackers claim
+0.5-1.0 deg; a decent webcam pipeline lands around 1.5-3 deg.
+
+Why that matters for design rather than bragging: your target size must exceed
+roughly 2x your angular error, or users miss constantly. At 600mm viewing
+distance, 1 deg is about 10.5mm on screen. So a 2.5 deg pipeline wants targets
+of at least ~50mm -- which is a 4x3 grid on a 24" monitor, not a desktop icon.
+That number is what tells you whether you need the zoom-to-refine stage.
+
+The run collects a calibration grid, then a SEPARATE validation grid at
+offset positions. Reporting error on the points you fitted to is self-flattery;
+the validation grid is the honest number.
+
+  bin/calibrate                    calibrate + 6-point validate
+  bin/calibrate --points 25        denser calibration grid
+  bin/calibrate --val-points 26    denser VALIDATION grid -- needed to follow
+                                   the online-recalibration click curve
+  bin/calibrate --out user.npz
+"""
+
+import argparse
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import cv2
+import numpy as np
+
+from spike import backends, calib, camera, config, features
+from spike.targets import (WIN, collect_point, grid_points, shuffled,
+                           validation_points)
+from spike.oneeuro import OneEuroFilter2D
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", default=None)
+    ap.add_argument("--points", type=int, default=None)
+    ap.add_argument("--val-points", type=int, default=6, dest="val_points",
+                    help="validation grid size (default 6 -- the original "
+                         "grid, kept for comparability with runs 1-5). "
+                         "Denser is needed to follow the online-recalibration "
+                         "click curve: with 6 you run out of held-out points "
+                         "after 3 clicks.")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="RNG seed for presentation order (saved with the "
+                         "run; omit for a random one)")
+    ap.add_argument("--raster", action="store_true",
+                    help="present in raster order like runs 1-6. Only for "
+                         "reproducing them -- it makes elapsed time collinear "
+                         "with target y, so drift and head-follows-target "
+                         "become inseparable.")
+    ap.add_argument("--out", default="calibration.npz")
+    ap.add_argument("--windowed", action="store_true")
+    args = ap.parse_args()
+
+    cfg = config.load(args.config)
+    n_pts = args.points or cfg["calibration"]["points"]
+    W = cfg["screen"]["width_px"]
+    H = cfg["screen"]["height_px"]
+    ppmm = config.px_per_mm(cfg)
+    dist = cfg["screen"]["viewing_distance_mm"]
+
+    c = cfg["camera"]
+    cam = camera.Camera(c["device"], c["width"], c["height"], c["fps"],
+                        c["fourcc"], c["exposure"], c["focus"],
+                        c["gain"]).open()
+    if not cam.all_verified():
+        print("!! camera controls did not stick; accuracy will suffer")
+        print(cam.control_report())
+    be = backends.create(prefer=cfg["inference"]["backend"])
+
+    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+    if not args.windowed:
+        cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN,
+                              cv2.WINDOW_FULLSCREEN)
+    canvas = np.zeros((H, W, 3), dtype=np.uint8)
+
+    try:
+        # Timestamps for every point, both blocks. The validation grid is
+        # collected minutes after the fit, and on 2026-08-16 that gap -- not
+        # the model, the point count or the head pose -- was what destroyed
+        # accuracy. Without times you cannot tell drift from a bad fit.
+        t_start = time.time()
+
+        seed = args.seed if args.seed is not None \
+            else int(np.random.SeedSequence().entropy % (2 ** 31))
+        rng = np.random.default_rng(seed)
+        print("presentation order: %s (seed %d)"
+              % ("RASTER -- time/position confounded" if args.raster
+                 else "randomised", seed))
+
+        cal_pts = grid_points(n_pts, W, H)
+        if not args.raster:
+            cal_pts, _ = shuffled(cal_pts, rng)
+        X, y, t_cal = [], [], []
+        for i, pt in enumerate(cal_pts):
+            f = collect_point(cam, be, cfg, canvas, pt,
+                              "calibrating  %d/%d" % (i + 1, len(cal_pts)))
+            if f is None:
+                print("aborted")
+                return 1
+            X.append(f)
+            y.append(pt)
+            t_cal.append(time.time() - t_start)
+
+        mapper = calib.GazeMapper(
+            ridge=cfg["calibration"]["ridge"],
+            ring_size=cfg["calibration"]["ring_size"],
+            refit_every=cfg["calibration"]["refit_every"]).fit(X, y)
+
+        val_pts = validation_points(W, H, args.val_points)
+        if not args.raster:
+            val_pts, _ = shuffled(val_pts, rng)
+        Xv, yv, t_val = [], [], []
+        for i, pt in enumerate(val_pts):
+            f = collect_point(cam, be, cfg, canvas, pt,
+                              "validating  %d/%d" % (i + 1, len(val_pts)))
+            if f is None:
+                break
+            Xv.append(f)
+            yv.append(pt)
+            t_val.append(time.time() - t_start)
+    finally:
+        cv2.destroyAllWindows()
+        cam.close()
+        be.close()
+
+    # -- report ---------------------------------------------------------
+    train_pred = np.vstack([mapper.predict(x) for x in X])
+    train_err = calib.angular_error_deg(train_pred, np.array(y), ppmm, dist)
+    print("\n=== calibration")
+    print("  points fitted        %d" % len(X))
+    print("  training error       %.2f deg mean   %.2f deg p95  (self-flattery)"
+          % (train_err.mean(), np.percentile(train_err, 95)))
+
+    if Xv:
+        pred = np.vstack([mapper.predict(x) for x in Xv])
+        err = calib.angular_error_deg(pred, np.array(yv), ppmm, dist)
+        px = np.linalg.norm(pred - np.array(yv), axis=1)
+        print("\n=== validation  (this is the honest number)")
+        print("  held-out points      %d" % len(Xv))
+        print("  mean error           %.2f deg   (%.0f px)"
+              % (err.mean(), px.mean()))
+        print("  p95 error            %.2f deg   (%.0f px)"
+              % (np.percentile(err, 95), np.percentile(px, 95)))
+        print("  worst point          %.2f deg" % err.max())
+
+        p95 = np.percentile(err, 95)
+        min_target_mm = 2.0 * np.tan(np.radians(p95)) * dist
+        min_target_px = min_target_mm * ppmm
+        cols = max(1, int(W / max(min_target_px, 1)))
+        rows = max(1, int(H / max(min_target_px, 1)))
+        print("\n=== what this means for your UI")
+        print("  minimum reliable target  %.0f mm  (%.0f px)"
+              % (min_target_mm, min_target_px))
+        print("  usable grid              %d x %d cells" % (cols, rows))
+        if cols >= 8:
+            print("  -> good enough for direct cursor pointing on most UI.")
+        elif cols >= 4:
+            print("  -> fine for an AAC grid. For desktop cursor work you will")
+            print("     want the zoom-to-refine stage: gaze picks a region,")
+            print("     puff magnifies it, second gaze picks within it.")
+        else:
+            print("  -> too coarse. Before writing more code, check: is the")
+            print("     face filling the frame? are exposure and focus locked?")
+            print("     is the input_size too small? (run bin/bench --sweep)")
+
+        # -- drift between the two blocks -------------------------------
+        # The validation grid is collected minutes after the fit. If the
+        # features have moved in between, the mapping is being scored against
+        # a face that is no longer where it was fitted -- which is drift, not
+        # inaccuracy, and it is the thing online recalibration exists to fix.
+        # Report it here so the two are never confused again.
+        A = np.array(X)
+        B = np.array(Xv)
+        gap = (t_val[0] - t_cal[-1]) if (t_val and t_cal) else float("nan")
+        print("\n=== drift between calibration and validation blocks")
+        print("  gap  %.0f s   (calibration spanned %.0f s)"
+              % (gap, t_cal[-1] - t_cal[0] if len(t_cal) > 1 else 0.0))
+
+        # Only HEAD POSE is a drift indicator. The iris features are supposed
+        # to differ between blocks -- the two grids point at different places,
+        # so a gaze feature that did NOT move would mean the tracker was dead.
+        # Judging drift on all ten features flags the healthy ones and is how
+        # you talk yourself into the wrong fix.
+        pose = [i for i, nm in enumerate(features.FEATURE_NAMES)
+                if nm in ("yaw", "pitch", "roll", "t_x", "t_y", "t_z")]
+        gaze = [i for i in range(len(features.FEATURE_NAMES)) if i not in pose]
+
+        def shift_sd(i):
+            sd = A[:, i].std()
+            return abs(B[:, i].mean() - A[:, i].mean()) / sd if sd > 1e-12 \
+                else 0.0
+
+        print("  %-10s %9s %9s %9s" % ("head pose", "cal mean", "val mean",
+                                       "shift/sd"))
+        worst = (0.0, "")
+        for i in pose:
+            s = shift_sd(i)
+            if s > worst[0]:
+                worst = (s, features.FEATURE_NAMES[i])
+            print("  %-10s %9.4f %9.4f %9.2f%s"
+                  % (features.FEATURE_NAMES[i], A[:, i].mean(),
+                     B[:, i].mean(), s, "  <--" if s >= 1.0 else ""))
+        print("  (gaze features shift by %s sd -- EXPECTED, different targets)"
+              % ", ".join("%.1f" % shift_sd(i) for i in gaze))
+
+        if worst[0] >= 1.0:
+            print("  -> head pose moved %.1f sd (%s) between blocks. The"
+                  % (worst[0], worst[1]))
+            print("     validation grid is scored against a head the fit never")
+            print("     saw: read the validation error as DRIFT, not accuracy.")
+        else:
+            print("  -> head pose held to under 1 sd; drift does NOT explain")
+            print("     the validation error. Look at the fit instead.")
+
+    mapper.save(args.out,
+                vX=np.array(Xv) if Xv else np.zeros((0, features.FEATURE_DIM)),
+                vy=np.array(yv, dtype=np.float64) if yv else np.zeros((0, 2)),
+                t_cal=np.array(t_cal, dtype=np.float64),
+                t_val=np.array(t_val, dtype=np.float64),
+                seed=np.array(seed),
+                raster=np.array(bool(args.raster)))
+    print("\nsaved %s" % args.out)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
