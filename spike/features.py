@@ -77,8 +77,13 @@ def _normalised_iris(lm, iris, out, inn, up, lo):
     return float(d[0] / w), float(d[1] / h)
 
 
-def head_pose(lm, frame_w, frame_h, focal_px=None):
-    """solvePnP head pose. Returns (yaw, pitch, roll in rad, tvec in mm)."""
+def head_pose(lm, frame_w, frame_h, focal_px=None, intr=None):
+    """solvePnP head pose. Returns (yaw, pitch, roll in rad, tvec in mm).
+
+    `intr` is a spike.intrinsics.Intrinsics. When neither it nor `focal_px` is
+    given, the calibrated file is loaded if present and the assumed FOV used
+    (with a warning) if not.
+    """
     import cv2
     pts2d = np.array([lm[i][:2] for i in _PNP_IDX], dtype=np.float64)
     pts2d[:, 0] *= frame_w
@@ -89,13 +94,23 @@ def head_pose(lm, frame_w, frame_h, focal_px=None):
     # distance with it. Measured effect: a subject at 584 mm reported as
     # 995 mm. The translation vector feeds the calibration feature vector, so
     # the error is not merely cosmetic.
-    f = focal_px if focal_px else (frame_w / 2.0) / np.tan(
-        np.radians(DEFAULT_HFOV_DEG) / 2.0)
-    K = np.array([[f, 0, frame_w / 2.0],
-                  [0, f, frame_h / 2.0],
-                  [0, 0, 1.0]], dtype=np.float64)
+    # CALIBRATED intrinsics when they exist, the assumed FOV (loudly) when
+    # they do not. `intr` overrides both, for callers that already hold a set.
+    if intr is None and focal_px is None:
+        from spike import intrinsics as _intr
+        intr = _intr.load(width=frame_w, height=frame_h)
+    if intr is not None:
+        K, dist = intr.K, intr.dist_coeffs
+    else:
+        f = focal_px
+        K = np.array([[f, 0, frame_w / 2.0],
+                      [0, f, frame_h / 2.0],
+                      [0, 0, 1.0]], dtype=np.float64)
+        dist = np.zeros((5, 1))
+    # Real distortion coefficients, not zeros. At 78 deg diagonal the corner
+    # distortion is not small, and the eye landmarks are not near the centre.
     ok, rvec, tvec = cv2.solvePnP(
-        _MODEL_3D, pts2d, K, np.zeros((4, 1)),
+        _MODEL_3D, pts2d, K, dist,
         flags=cv2.SOLVEPNP_ITERATIVE)
     if not ok:
         return 0.0, 0.0, 0.0, np.zeros(3)
@@ -112,7 +127,7 @@ def head_pose(lm, frame_w, frame_h, focal_px=None):
     return yaw, pitch, roll, tvec.ravel()
 
 
-def extract(landmarks, frame_w, frame_h, focal_px=None):
+def extract(landmarks, frame_w, frame_h, focal_px=None, intr=None):
     """Landmarks (N,3 normalised) -> (feature vector, diagnostics dict)."""
     lm = np.asarray(landmarks, dtype=np.float64)
     if lm.shape[0] < 478:
@@ -122,7 +137,7 @@ def extract(landmarks, frame_w, frame_h, focal_px=None):
 
     lx, ly = _normalised_iris(lm, L_IRIS, L_OUT, L_IN, L_UP, L_LO)
     rx, ry = _normalised_iris(lm, R_IRIS, R_IN, R_OUT, R_UP, R_LO)
-    yaw, pitch, roll, t = head_pose(lm, frame_w, frame_h, focal_px)
+    yaw, pitch, roll, t = head_pose(lm, frame_w, frame_h, focal_px, intr)
 
     # t_z is in the hundreds of mm while the angles are order 0.1 rad. Left
     # unscaled, the polynomial fit would be dominated by translation terms and

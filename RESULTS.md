@@ -259,6 +259,67 @@ board-only.
 
 ---
 
+## Gaze in a real application, 2026-09-16 — the vertical axis is unusable
+
+Bunny Feeding Frenzy was wired to the gaze pipeline and played on the board.
+Running a real application turned out to be a better measuring instrument than
+any of the bench tools, because it exercises the mapping continuously for
+minutes at a time instead of for one 25-point sitting.
+
+**The finding.** From the game's own telemetry, comparing where the gaze said
+the player was looking against where the bunny actually was:
+
+```
+session A:  gaze mean y = 180, 189, 183       bunnies at y ~130-160
+session B:  gaze mean y =  51,  48, 3, 4, 1   bunnies at y ~148-165
+```
+
+The vertical aim pins to the BOTTOM of the screen in one session and the TOP in
+the next, then clamps at the edge. That is not drift -- drift is monotonic and
+was separately measured at r(time, error) = +0.57 -- it is an essentially
+ARBITRARY fit, landing somewhere different each calibration.
+
+It corroborates, from an entirely independent direction, the correlation
+already measured on the calibration data:
+
+| axis | predicted-vs-true correlation |
+|---|---|
+| horizontal | **r_x = 0.78 - 0.90** |
+| vertical | **r_y = 0.22** |
+
+There is almost no vertical signal to fit, so the vertical half of every
+mapping in this project has been close to noise. Horizontal has been working
+the whole time.
+
+**What follows from it.** Stop fitting the axis that does not work. Steer with
+gaze-x and pin y to the target band. In the game the bunny spawn band is 26 px
+tall out of 240, so discarding y costs nothing there -- and for the AAC grid in
+`PLAN.md` it argues for **wide, short cells** rather than a square grid, which
+is a design consequence, not a workaround.
+
+This is specified and NOT yet implemented.
+
+### Secondary findings, all measured in play
+
+- **A degree-2 polynomial cannot be fitted from a short calibration.** 9 points
+  against 66 parameters extrapolated to spans of **355,000 px** on a 320 px
+  screen once the head left the calibration manifold. A 7-parameter linear fit
+  is bounded and stable. This is the same over-parameterisation seen in Gate 1c,
+  now visible in seconds rather than inferred.
+- **Ridge on unstandardised features crushes the fit** -- training error 108 px
+  and a predicted range of 27 px against a 243 px target. `calib.py` already
+  documented this in `_moments()`; the lesson had to be learned twice.
+- **Targets must be larger than the error.** The bunny was 3.7 deg against a
+  5-8 deg error. Enlarged to 7.4 deg.
+- **The screen is a usable face lamp.** Calibration now runs white-on-dark
+  inverted and play carries a white border, because face brightness was
+  measured at 21 under room light against the 90-140 the landmark model wants.
+
+Full detail, including the traps that cost time, is in the game's own
+`GAZE.md`.
+
+---
+
 ## Full-res ROI crop — TRIED 2026-08-16, made things WORSE. Reverted.
 
 The lead from run 7 was that iris resolution was the binding constraint: 8.3 px
@@ -788,3 +849,50 @@ is in `RESTART.md` § "The soak test".
       Aug 8 22:26-22:27, 3 at Aug 9 04:12-04:16 (during the soak), 3 more at
       power-on Aug 16. The board has never recorded a clean shutdown.
 - [ ] Can the eMMC be imaged? The whole replication plan depends on it
+
+## 2026-09-19 — rim exposure, and a false annulus worth knowing about
+
+Chasing "why does the rim annulus never form", two things came out that hold
+regardless of the glasses.
+
+**Rim detection needs its own exposure.** `[camera] exposure = 156, gain = 0`
+is a *gaze* setting: short integration so a saccade does not smear. For rim
+pose the target is a 50 mm edge on a slowly-moving head (`detect_every_n = 5`),
+and 156/0 left the face at mean 20 — the rim edges were under the noise floor.
+Twelve-point sweep of the C920 EV ladder against gain, face-ROI mean:
+
+| exposure | gain 0 | gain 96 | gain 192 |
+|---|---|---|---|
+| 156  |  21 |  71 | 107 |
+| 312  |  43 | 112 | **150** |
+| 625  |  62 | 146 | 187 |
+| 1250 | 113 | 201 | 228 |
+
+The trap is the bottom-left corner. 1250 reads as a good exposure (mean 113)
+and is *worse than useless*: 1250 is 125 ms, the head cannot hold still to
+pixel precision that long, and the lens that was cleanly detected at 156
+disappears from the candidate list altogether. Brighter and blinder at once.
+The fix is **gain, not time** — gain costs a 50 mm rim far less shot noise
+than it would cost an 8 px iris. Recorded as `rim_exposure`/`rim_gain` in
+`[frame_rig]`.
+
+**The ratio gate alone will accept junk.** At 625/96 a pair fitted
+`a = 122.33 / 105.20`, ratio **1.163** against the wanted 1.1364 — inside the
+±6 % tolerance, a clean ACCEPT. It was background clutter: arc coverage 0.28
+and 0.33, residuals 0.072 and 0.080. A real rim in the same frames sits at
+cov 0.94. Ratio says "these two ellipses are concentric and correctly
+proportioned", and two sloppy fits satisfy that by accident often enough to
+matter, because a bad fit's radius is close to arbitrary.
+
+Fixed: `Ellipse` now carries the `coverage`/`residual` it was fitted with, and
+`ring_pair()` refuses a pair whose worse member falls below
+`MIN_RING_COVERAGE`. This changes nothing on the `find_rims()` path, which
+already gated candidates before grouping — it exists because `ring_pair` is
+public and documented as a standalone filter, and called directly it had no
+quality floor at all. Enforced only when quality is present, so synthetic
+ellipses still pass. Two tests pin both halves; 149 passing.
+
+**Not measured:** the annulus still has not formed on real hardware. The
+session's captures turned out to be of ordinary rectangular prescription
+glasses, not the round pair — see GLASSES.md on why a non-circular outline
+cannot work. The distance ladder (update.md §4.1) is still unrun.

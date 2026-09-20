@@ -196,3 +196,68 @@ name   = "right"
 match  = "Gaze Mouse R"
 glyph  = "cursor_r.bmp"      # e.g. outlined/mirrored arrow — visibly different
 accent = "#eb6834"
+
+[frame_rig]
+# CALIPERED 2026-09-19 (update.md). These supersede the photo-derived values.
+#
+# The product photo is labelled 1.85 in = 47.0 mm, and that is the MID-RIM
+# diameter, not the outer one -- outer is 50.0, inner 44.0, so the midline is
+# exactly 47.0. Scaling off that photo therefore gave radius 23.5 where the
+# truth is 25.0: a 6% error in every reported distance.
+#
+# It also explains the hardware run: bin/rimcheck measured an implied radius of
+# 23.71 mm, and the mid-rim radius is 23.50. The detector was fitting the two
+# rim edges MERGED into a single mid-rim ellipse -- which is what update.md
+# section 2.2 predicts below ~960 px detect width, and we were at 1280.
+enabled         = false   # flip on once measured_n >= 5
+radius_mm       = 25.0    # OUTER radius; calipered outer diameter 50.0 mm
+inner_radius_mm = 22.0    # calipered inner diameter 44.0 mm
+separation_mm   = 71.0    # PLACEHOLDER -- MEASURE. Expected 67-75 from the
+                          # 137 mm frame width. Gates yaw and the span check
+                          # only; DISTANCE needs the radius alone, so distance
+                          # testing does not have to wait for this.
+measured_n      = 1       # one pair calipered. RigSpec.trusted wants 5.
+spread_mm       = 0.0     # unknown until ten pairs are measured. Spread is
+                          # what limits accuracy: +/-0.5 mm is 6.1 mm of
+                          # distance error at 600 mm, +/-1.0 mm is 12.1 mm.
+detect_every_n  = 5       # head pose moves slowly next to gaze
+
+# MEASURED 2026-09-19: rim detection needs its OWN exposure, not [camera]'s.
+# exposure=156 gain=0 is the GAZE setting -- short, to avoid smearing a
+# saccade -- and in this room it left the face at mean 20 with the rim edges
+# below the noise. Twelve-point sweep of the C920 EV ladder x gain:
+#     156/0    face mean  21      625/0    face mean  62
+#     312/192  face mean 150      625/96   face mean 158
+#    1250/0    face mean 113  <-- 125 ms: BRIGHT BUT USELESS
+# 1250 is 125 ms of integration. The head cannot hold still to pixel
+# precision for that long, so the rim smears and the lens that WAS detected
+# at 156 vanishes from the candidate list entirely -- brighter and blinder at
+# once. The fix is gain, not time: 312 (31 ms) with gain 192 is properly
+# exposed and still short enough to freeze the head.
+# Gain is free here in a way it is not for gaze, because a rim is a 50 mm
+# edge and shot noise costs it far less than it costs an 8 px iris.
+rim_exposure    = 312     # 31.2 ms -- on the EV ladder; off-ladder values
+rim_gain        = 192     # silently floor to the stop below
+
+detect_width    = 1920    # NOT 640. A 3 mm rim subtends 6.8 px at 1920 and
+                          # 2.3 px at 640, where the two edges merge and the
+                          # concentric check silently degrades to a guess.
+use_for_distance   = true
+crop_for_inference = true
+
+[camera_intrinsics]
+# Written by tools/calibrate_camera.py. Until this file exists, everything
+# falls back to an ASSUMED 70.4 deg FOV, which is a systematic error larger
+# than the difference between any two fiducial designs. The loader warns
+# loudly when it falls back -- do not silence that warning, fix the cause.
+path = "camera_intrinsics.json"
+
+[marker_rig]
+# Printed ArUco board: the RULER the cheap methods are judged against, not the
+# product. Verified by render->detect->solve: translation <= 1.26 mm,
+# rotation <= 0.40 deg.
+enabled     = false       # true once spike/marker_board.py is delivered
+dict        = "DICT_4X4_50"
+marker_mm   = 30.0
+geometry    = "spike/rig_geometry.py"
+min_markers = 3           # 3 of 4 is enough; fewer is not worth solving

@@ -9,6 +9,19 @@ visitor who arrives, tries it for ninety seconds, and leaves.
 
 ---
 
+## Status 2026-09-16 — one finding here has been CONFIRMED in the field
+
+Driving a real game by gaze corroborated the weakest result in this document
+from an independent direction: **the vertical axis carries almost no signal**
+(`r_y = 0.22` against `r_x = 0.78-0.90`). In play the vertical aim lands in a
+different arbitrary place every calibration. See `RESULTS.md` § "Gaze in a real
+application".
+
+That sharpens the design proposed below. Splitting `g_person` from `f_setup`
+is still right, but whatever replaces the current mapping should treat the two
+axes as having very different signal quality rather than fitting them
+symmetrically — and any UI built on this wants wide, short targets.
+
 ## What is actually wrong with what we have
 
 `bin/calibrate` fits a 66-parameter polynomial from 25 targets shown **on the

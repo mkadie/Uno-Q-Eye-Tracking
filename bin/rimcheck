@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""Find real glasses rims on a real camera, and help measure the rig.
+
+`find_rims()` has only ever seen synthetic ellipses. Everything in GLASSES.md's
+accuracy table is projection-through-a-known-camera: it validates the geometry
+and says nothing about whether Canny finds a rim on a real face in real light.
+This is the tool that answers that.
+
+It does two jobs, because both need somebody wearing the glasses:
+
+  1. DETECTION. What fraction of frames yield a pair, and how stable are the
+     fitted ellipses frame to frame? Jitter in the fitted semi-major axis is
+     distance noise, directly: 1% of 54 px is ~6 mm at 600 mm.
+
+  2. MEASUREMENT. Given a known subject distance, back out the rig dimensions
+     the image implies. Calipers are still the right answer -- this is a cross
+     check, and a way to get a usable RigSpec before anybody finds the calipers.
+
+  bin/rimcheck                             detect only, report stability
+  bin/rimcheck --at 600                    also imply rig dimensions
+  bin/rimcheck --save rims.npz             keep frames for offline iteration
+  bin/rimcheck --expect 700 --tolerance 0.6   loosen the size gate
+
+A run with no detections is a RESULT, not a failure of the tool: report the
+Canny settings and the lighting, and try --debug to dump the edge image.
+"""
+
+import argparse
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import cv2
+import numpy as np
+
+from spike import camera, config
+from spike.frame_fiducial import RigSpec, find_rims, plausible, pose_from_rims
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", default=None)
+    ap.add_argument("--frames", type=int, default=60)
+    ap.add_argument("--expect", type=float, default=600.0,
+                    help="expected subject distance mm, for the size gate")
+    ap.add_argument("--tolerance", type=float, default=0.45)
+    ap.add_argument("--canny", default="40,120")
+    ap.add_argument("--close", type=int, default=7)
+    ap.add_argument("--annulus", action="store_true",
+                    help="require the two concentric edges of each lens "
+                         "(ratio 1.1364). Rejects non-lens circles AND "
+                         "identifies the OUTER edge instead of guessing -- "
+                         "worth 82 mm at 600 mm. Needs --width 1920.")
+    ap.add_argument("--width", type=int, default=None,
+                    help="capture width; 1920 for annulus mode, since a 3 mm "
+                         "rim is only 2.3 px at 640 and the edges merge")
+    ap.add_argument("--clahe", action="store_true",
+                    help="local contrast enhancement; helps a dim room, hurts "
+                         "a well-lit one. Try it if the face region is dark.")
+    ap.add_argument("--at", type=float, default=None,
+                    help="TRUE subject distance mm; implies rig dimensions")
+    ap.add_argument("--save", default=None)
+    ap.add_argument("--exposure", type=int, default=None,
+                    help="override camera exposure for THIS run only. The rim "
+                         "path tolerates a longer exposure than the gaze path: "
+                         "head pose moves slowly (detect_every_n=5), so the "
+                         "motion blur that rules out 312 for iris tracking is "
+                         "not a constraint here. Pick from the C920's EV "
+                         "ladder: 39 78 156 312 625 1250 2500.")
+    ap.add_argument("--debug", default=None,
+                    help="write an annotated frame + edge map here")
+    args = ap.parse_args()
+
+    cfg = config.load(args.config)
+    c = cfg["camera"]
+    fr = cfg.get("frame_rig", {})
+    canny = tuple(int(v) for v in args.canny.split(","))
+
+    # Placeholder dimensions are fine for DETECTION -- find_rims only uses them
+    # for the size gate and the pairing check. They are NOT fine for pose, and
+    # the report says so loudly below.
+    rig = RigSpec(radius_mm=float(fr.get("radius_mm", 25.0)),
+                  inner_radius_mm=float(fr.get("inner_radius_mm", 22.0)),
+                  separation_mm=float(fr.get("separation_mm", 71.0)),
+                  measured_n=int(fr.get("measured_n", 0)),
+                  spread_mm=fr.get("spread_mm"))
+
+    exposure = args.exposure if args.exposure is not None else c["exposure"]
+    cap_w = args.width or (1920 if args.annulus else c["width"])
+    cap_h = int(round(cap_w * c["height"] / c["width"]))
+    cam = camera.Camera(c["device"], cap_w, cap_h, c["fps"],
+                        c["fourcc"], exposure, c["focus"],
+                        c["gain"]).open()
+    if not cam.all_verified():
+        print("!! camera controls did not stick; run bin/probe (bright light?)")
+
+    W = cap_w
+    # Calibrated intrinsics if tools/calibrate_camera.py has been run, the
+    # assumed FOV with a loud warning if not. An error in f is a proportional
+    # error in every distance below.
+    from spike import intrinsics as _intr
+    _it = _intr.load(width=W, height=cap_h)
+    fx, fy, cx, cy = _it.fx, _it.fy, _it.cx, _it.cy
+
+    print("=== rimcheck")
+    print("  capture   %dx%d   fx=%.1f  %s"
+          % (W, cap_h, fx,
+             "CALIBRATED (rms %s)" % _it.rms if _it.calibrated
+             else "from an ASSUMED FOV -- run tools/calibrate_camera.py"))
+    print("  rig       r=%.1f mm  sep=%.1f mm  measured_n=%d  trusted=%s"
+          % (rig.radius_mm, rig.separation_mm, rig.measured_n, rig.trusted))
+    print("  gate      expect %.0f mm +/- %.0f%%  canny=%s"
+          % (args.expect, args.tolerance * 100, canny))
+    print("  exposure  %d%s" % (exposure,
+          "  (overridden for this run)" if args.exposure is not None else ""))
+    print("\n  wear the glasses, face the camera, hold still...\n")
+
+    hits = 0
+    rows, frames = [], []
+    last = None
+    t0 = time.perf_counter()
+    for i in range(args.frames):
+        frame = cam.read()
+        if frame is None:
+            continue
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # Save a sample of EVERY frame, not only the successes. Saving only
+        # hits biases offline tuning toward the cases that already work, which
+        # is exactly backwards for diagnosing a detector that mostly misses.
+        if args.save is not None and len(frames) < 16 and i % 3 == 0:
+            frames.append(frame)
+        found = find_rims(gray, rig, fx, expected_distance_mm=args.expect,
+                          tolerance=args.tolerance, canny=canny,
+                          close_px=args.close, clahe=args.clahe,
+                          annulus=args.annulus)
+        if found is None:
+            continue
+        hits += 1
+        left, right = found
+        last = (frame, left, right)
+        pose = pose_from_rims(left, right, rig, fx, fy, cx, cy,
+                              pitch_hint_deg=0.0)
+        rows.append((left.a, right.a, left.axis_ratio, right.axis_ratio,
+                     np.hypot(right.cx - left.cx, right.cy - left.cy),
+                     pose["distance_mm"], pose["yaw_deg"], pose["roll_deg"],
+                     pose["span_residual_mm"],
+                     1.0 if plausible(pose, rig) else 0.0))
+    dt = time.perf_counter() - t0
+
+    usable = int(sum(r[9] for r in rows)) if rows else 0
+    print("=== detection")
+    print("  %d / %d frames yielded a pair  (%.0f%%)   %.1f fps through the loop"
+          % (hits, args.frames, 100.0 * hits / max(args.frames, 1),
+             args.frames / dt if dt > 0 else 0.0))
+    # USABLE is the number that matters: found AND plausible. A high find rate
+    # with a low usable rate means the gates are admitting junk, which is worse
+    # than finding nothing -- a confident wrong pose cannot be caught
+    # downstream. Compare THIS between rig changes, not the find rate.
+    print("  %d / %d frames USABLE (found AND plausible)  (%.0f%%)  <-- the metric"
+          % (usable, args.frames, 100.0 * usable / max(args.frames, 1)))
+
+    if not rows:
+        print("\n  NO RIMS FOUND. That is a result, not a crash. Check, in order:")
+        print("   - are the glasses actually ON and both rims fully visible?")
+        print("   - is the subject near --expect (%.0f mm)? the size gate is"
+              % args.expect)
+        print("     +/-%.0f%% and a 900 mm subject fails a 600 mm gate."
+              % (args.tolerance * 100))
+        print("   - rerun with --debug out.png and look at the edge map: if the")
+        print("     rims are broken into arcs, Canny is too tight for this")
+        print("     lighting -- try --canny 40,120.")
+        print("   - thin wire frames may simply not survive Canny at this")
+        print("     distance. That is a rig problem, not a software one.")
+        cam.close()
+        return 1
+
+    A = np.array(rows)
+    med = np.median(A, axis=0)
+    p = lambda j: (np.median(A[:, j]), A[:, j].std())
+
+    print("\n=== fitted geometry (median, sd across frames)")
+    print("  semi-major L   %7.2f px  sd %.2f" % p(0))
+    print("  semi-major R   %7.2f px  sd %.2f" % p(1))
+    print("  axis ratio L   %7.3f     sd %.3f" % p(2))
+    print("  axis ratio R   %7.3f     sd %.3f" % p(3))
+    print("  centre sep     %7.2f px  sd %.2f" % p(4))
+
+    # Frame-to-frame jitter in the major axis IS distance noise.
+    jit = A[:, 0].std() / max(np.median(A[:, 0]), 1e-6)
+    print("\n  major-axis jitter %.2f%% -> ~%.1f mm of distance noise at %.0f mm"
+          % (100 * jit, jit * args.expect, args.expect))
+
+    print("\n=== pose (placeholder rig -- NOT a measurement)" if not rig.trusted
+          else "\n=== pose")
+    print("  distance   %7.1f mm  sd %.1f" % p(5))
+    print("  yaw        %7.2f deg sd %.2f" % p(6))
+    print("  roll       %7.2f deg sd %.2f" % p(7))
+    print("  span resid %7.2f mm" % med[8])
+    print("  plausible  %.0f%% of detections" % (100 * A[:, 9].mean()))
+    if not rig.trusted:
+        print("  ^ these scale directly with radius_mm, which is a PLACEHOLDER.")
+        print("    Caliper the frames before believing any of it.")
+
+    if args.at is not None:
+        # The useful inversion: at a known distance, what dimensions does the
+        # image imply? Cross-check against calipers, or a stopgap until then.
+        implied_r = med[0] * args.at / fx
+        implied_s = med[4] * args.at / fx
+        print("\n=== implied rig dimensions at a TRUE distance of %.0f mm"
+              % args.at)
+        print("  radius_mm      %.2f   (config says %.2f)"
+              % (implied_r, rig.radius_mm))
+        print("  separation_mm  %.2f   (config says %.2f)"
+              % (implied_s, rig.separation_mm))
+        print("  -> these assume the stated distance is exact and the FOV is")
+        print("     nominal. Calipers beat both. Use this as a cross check.")
+
+    if args.debug and last is not None:
+        frame, left, right = last
+        vis = frame.copy()
+        for e in (left, right):
+            cv2.ellipse(vis, (int(e.cx), int(e.cy)), (int(e.a), int(e.b)),
+                        np.degrees(e.theta), 0, 360, (0, 220, 60), 2)
+        cv2.line(vis, (int(left.cx), int(left.cy)),
+                 (int(right.cx), int(right.cy)), (60, 160, 240), 1)
+        cv2.imwrite(args.debug, vis)
+        edges = cv2.Canny(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), *canny)
+        cv2.imwrite(args.debug.replace(".png", "_edges.png"), edges)
+        print("\n  wrote %s and the edge map beside it" % args.debug)
+
+    if args.save:
+        np.savez(args.save, rows=A,
+                 frames=np.array(frames) if frames else np.zeros((0,)),
+                 fx=np.array(fx), expect=np.array(args.expect))
+        print("  saved %s" % args.save)
+
+    cam.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

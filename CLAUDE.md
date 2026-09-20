@@ -65,6 +65,141 @@ overwhelmable by evidence. A fixed weight stalls drift correction at ~40% —
 this was found by a test, not by reasoning. See the comment block in
 `calib.py`.
 
+<!-- BEGIN glasses-fiducial -->
+**Glasses-rim head pose: the rims ARE the fiducial.** Round lensless party
+glasses, nothing printed, cut or glued on. A circle projects to an *exact*
+ellipse under perspective and no other outline does, so every departure from
+circular is pure pose information and the inversion is closed form. A wayfarer
+or cat-eye outline is already non-circular, so its shape and its perspective
+are entangled and you would need a contour template per production batch. Two
+rims also resolve the planar-marker yaw ambiguity: both lie in one plane, so
+the rig's x-axis must be perpendicular to the shared normal.
+
+Already rejected, do not re-propose: wayfarers + printed ArUco tabs (no flat
+area big enough, ~600 glue joints across 200 pairs, and a tab that rotates
+silently corrupts the geometry); cat-eye + rhinestones (rhinestones are
+mirrors -- the glint moves with the *light*, not the object -- and 2-3 mm is
+about 5 px); QR codes (built for a data payload, corners not optimised for
+pose).
+
+Four traps in `spike/frame_fiducial.py`. Each is commented in place; none of
+them fails loudly, which is why they are here:
+
+- **(a) OpenCV's ellipse angle is relative to whichever axis it called
+  "height".** `cv2.fitEllipse` returns full axis lengths as the
+  `(width, height)` of a rotated box, so when the major axis is the *height*
+  one its direction is `angle + 90`, not `angle`. Backwards, this transposes
+  every tilt by 90 degrees and reads as plausible-but-wrong pose rather than
+  as an error.
+- **(b) Distance comes from the MAJOR axis.** The major axis is the tilt
+  *axis*, so it is unforeshortened: `Z = f * radius_mm / semi_major_px`. This
+  makes distance immune to head rotation -- measured max error 1.20 mm across
+  a 75-pose sweep.
+- **(c) Yaw comes from the DEPTH DIFFERENCE, not from eccentricity.**
+  `yaw = -asin((z_right - z_left) / separation_mm)`. Deriving yaw from the
+  axis ratio carries a systematic perspective bias of a couple of degrees,
+  because `b/a = cos(tilt)` holds exactly only for a circle centred on the
+  optical axis. `test_yaw_within_half_a_degree` is what pins this.
+- **(d) Pitch sign is geometrically degenerate, and the gate is on MEASURED
+  YAW -- never on a confidence score.** Both rim centres lie *on* the rig's
+  x-axis and pitch rotates *about* that axis, so at zero yaw, tilting up and
+  tilting down produce mathematically identical rim geometry. The information
+  is not in the image and no filtering recovers it. Below
+  `YAW_MIN_FOR_PITCH_SIGN_DEG` the pose is flagged `pitch_ambiguous` and the
+  sign may come from `pitch_hint_deg` -- **one bit only, never the
+  magnitude**. Do not gate on how well separated the candidate normals are: a
+  separation score is not a correctness score.
+
+**Detection is by SHAPE, never by colour.** Five rim colours and a hall whose
+lighting drifts all day means any colour threshold that works at setup fails
+after lunch. Find the ellipse geometrically, then read colour from inside it
+purely as a visitor-identity label.
+
+**`RigSpec` must be MEASURED, not assumed.** A 1 mm error in `radius_mm` is a
+~4% error in every distance this module reports, silently. `RigSpec.trusted`
+stays False until `measured_n >= 5`.
+
+**CALIPERED 2026-09-19** (supersedes the photo-derived values): outer diameter
+**50.0 mm**, inner **44.0 mm**, rim 3.0 mm. Centre-to-centre separation is
+**still missing** — expected 67–75 mm from the 137 mm frame width. Distance
+needs the radius alone, so distance testing does not wait on it; it gates yaw
+and the span check only.
+
+The product photo is labelled 1.85 in = 47.0 mm and that is the **mid-rim**
+diameter, not the outer — scaling off it gave 23.5 where the truth is 25.0.
+Record the **spread over ten pairs**, not one pair: ±0.5 mm is 6.1 mm of
+distance error at 600 mm, ±1.0 mm is 12.1 mm.
+
+**The annulus ratio is the identity check.** The rim is a ring, so Canny
+returns two concentric ellipses per lens and their ratio is fixed at
+50.0/44.0 = **1.1364**. Requiring it (±6%) rejects almost everything that is
+not a lens — coffee lid 1.060, lanyard grommet 1.350, CD 8.000 — and it
+answers the question a single ellipse cannot: **which edge is this?** Inner
+mistaken for outer is a 13.6% scale error, 82 mm at 600 mm.
+
+**Resolving the two edges needs ~4 px of radial separation, so rim detection
+runs at 1920, not 640.** A 3 mm rim subtends 6.8 px at 1920, 3.4 at 960 and
+2.3 at 640, where the edges merge. `ring_pair()` rejects pairs closer than
+`MIN_RING_SEPARATION_PX` because accepting a merged pair fabricates confidence
+in a radius that is really the midline. MEASURED: `bin/rimcheck` at 1280
+reported an implied radius of 23.71 mm when the mid-rim radius is 23.50 — it
+had been fitting the midline the whole time.
+<!-- END glasses-fiducial -->
+
+<!-- BEGIN camera-intrinsics -->
+**Calibrate the camera before believing any distance.** Every distance here is
+`f * size / pixels`, so an error in `f` is a proportional error in all of it —
+rim distance, marker distance, and the `t_z` feature feeding the gaze mapping.
+A real C920 differs from its spec-sheet 70.4° by a few percent, and that is a
+systematic error **larger than the difference between any two fiducial designs**
+you might argue about.
+
+```
+python3 tools/calibrate_camera.py capture    # SPACE keeps a frame, q finishes
+python3 tools/calibrate_camera.py solve      # -> camera_intrinsics.json
+```
+
+Target RMS reprojection **under 0.5 px over 20 frames**. Capture rules that
+matter more than frame count: **tilt 30–45° in both axes** (face-on views
+cannot separate focal length from distance — you get a confident, wrong `f`);
+push the board into **all four corners** (distortion is largest there); keep
+the board flat and rigid; hold still. **If `fx` and `fy` differ by more than
+2%, you did not tilt enough** — `Intrinsics.fx_fy_agree` checks this.
+
+`spike/intrinsics.py` loads the real file when it exists and **warns loudly**
+when it falls back to the assumed FOV. Do not silence that warning; fix the
+cause. `Intrinsics.calibrated` is False for the fallback so nothing can mistake
+a guess for a measurement.
+
+**Scale intrinsics with resolution.** `fx, fy, cx, cy` are all in pixels and
+all scale linearly with width, so a set measured at 1920 is wrong by 1.5× if
+you infer at 1280. `Intrinsics.for_size()` does it; forgetting is a silent
+proportional error in every distance.
+
+**Pass real `dist_coeffs` to `solvePnP`, not zeros.** At 78° diagonal the
+corner distortion is not small and the eye landmarks are not near the centre.
+
+**`spike/rig_geometry.py` is GENERATED and is y-DOWN.** OpenCV convention:
++x right, +y **down**, +z away from camera. Physical "up" on the plate is
+negative y. Getting that backwards **inverts pitch while looking entirely
+plausible** — the single easiest error to make here. Do not hand-edit the file.
+
+**The marker board is the ruler, not the product.** It exists to judge the
+cheap methods (rims, bare face mesh) against a pose you trust. Solve over the
+whole board rather than per-marker: four markers spanning 156 × 120 mm of
+corner spread beat any single 30 mm marker, and the board's non-collinear
+layout makes **pitch directly observable with no hint and no gate** — which is
+precisely what the rims cannot do. `reproj_px` above ~1 px means the geometry
+or the intrinsics are wrong; it is the best single diagnostic available.
+
+**OpenCV moved the ArUco API** — 4.7 added `cv2.aruco.ArucoDetector`, 4.13
+removed the free `detectMarkers`. `marker_board.make_detector()` binds at
+runtime; do not hardcode either form. And **turn on
+`CORNER_REFINE_SUBPIX`** — it is not the default, and without it you localise
+corners to whole pixels and throw away most of the precision the rig exists to
+provide.
+<!-- END camera-intrinsics -->
+
 ## Conventions
 
 - **No sklearn, no pandas.** Ridge regression is thirty lines of `lstsq`, and

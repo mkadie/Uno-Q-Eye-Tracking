@@ -8,6 +8,45 @@ After this reset: governor back to `schedutil` (run `./hil perf`), camera moved
 `video0 -> video2` (the by-id path in `config.toml` absorbed it, as designed),
 monitor still detected, `bin/probe` exits 0 with `gain = 0`.
 
+**UPDATE 2026-09-19 PROCESSED** (`/home/trex/claude/docs/update.md`). The
+glasses are now calipered — outer 50.0 mm, inner 44.0 mm — which supersedes
+the photo-derived 23.5 mm radius and explains the hardware run: the detector
+had been fitting the two rim edges MERGED at the midline. `ring_pair()`,
+`spike/intrinsics.py`, `spike/marker_board.py`, `spike/rig_geometry.py` and
+`tools/calibrate_camera.py` are all in. Suite **145**.
+
+**The two things that gate everything else, neither done:**
+
+1. **Run `tools/calibrate_camera.py`.** Until `camera_intrinsics.json` exists,
+   every distance is proportionally wrong by however far this C920 differs
+   from its spec sheet. Target RMS < 0.5 px, and `fx`/`fy` within 2% or the
+   capture did not tilt enough.
+2. **Caliper the centre-to-centre separation**, ten pairs, record the spread.
+   Expected 67–75 mm. Distance testing does NOT wait on this.
+
+Then the experiment in `update.md` §4: the distance ladder at 450–700 mm with
+all three estimators on the same frames. §4.4 says the one that matters most
+is **bare-faced `bin/calibrate`** — it needs none of the fiducial work.
+
+**THE PROJECT HAS PIVOTED TWICE since Gate 1c.** In order:
+
+1. **Glasses fiducial** (`GLASSES.md`) — 6-DOF head pose from the circular rims
+   of costume glasses. Geometry verified to sub-mm/sub-degree on synthetic
+   ground truth; real-rim detection works only intermittently and the black
+   frames are the worst case. Coloured frames were due 2026-09-17.
+2. **Bunny Feeding Frenzy driven by gaze** — the game now calibrates and plays
+   by eye on this board. See `/home/trex/claude/coder/games/bunny_feeding_frenzy/GAZE.md`,
+   which is the authoritative doc for that work. **Read it before touching the
+   game.** The board runs it from `~/bunny`.
+
+**The single most important open finding, from playing the game:** the
+VERTICAL gaze axis is unusable. In play the aim pins to the bottom of the
+screen in one session and the top in the next — arbitrary, not drifting —
+which matches the spike's own `r_y = 0.22` against `r_x = 0.78–0.90`. The fix
+that follows from the measurement is to steer with gaze-x only and pin y to
+the target band; it is specified but NOT implemented. Do that before any more
+smoothing or calibration work.
+
 **GATE 1c — run 7 is the first CLEAN measurement; runs 1-6 were confounded.**
 Both grids were presented in raster order, making elapsed time collinear with
 target y (r = +0.98), which inflated every head-pose/time correlation. Order is
@@ -219,6 +258,26 @@ angular error Gate 1c produces.**
 ---
 
 ## Getting back to a working state
+
+**To run the gaze-controlled game** (the most likely reason you are here):
+
+```bash
+# on the dev machine -- deploy, then run on the board
+cd ~/claude/coder/games/bunny_feeding_frenzy
+rsync -az --exclude='.git' --exclude='.venv' --exclude='awscliv2.zip' \
+      --exclude='android' --exclude='ios' --exclude='aws' \
+      --exclude='__pycache__' --exclude='*.pyc' --exclude='screenshots' \
+      ./ arduino@10.42.0.250:~/bunny/
+
+ssh arduino@10.42.0.250 'pkill -f main.py'          # NOT "python3 main.py" -- see GAZE.md
+ssh arduino@10.42.0.250 'cd ~/bunny && DISPLAY=:0 BFF_GAZE=1 \
+  BFF_GAZE_PATH=$HOME/unoq-gaze-spike BFF_GAZE_EXPOSURE=625 python3 -u main.py'
+```
+
+`pygame-ce 2.5.8` is installed on the board (aarch64 wheel, no source build).
+The game prints `[gaze] ...` diagnostics to stdout — calibration quality, the
+gaze/bunny offset, snap counts and feeds. Those lines are how every problem so
+far was actually found; read them before changing anything.
 
 To re-enter the Claude session for this project: **`~/claude/unoq.sh`** — cds
 here and continues the most recent conversation (`--new` / `-n` anywhere in the
@@ -662,6 +721,11 @@ calibration corrupts the one baseline that can only ever be recorded once.
 | `REPLICATION.md` | how to rebuild this board from scratch |
 | `RESTART.md` | this file — session state and recovery |
 | `AUTOCAL.md` | auto-calibration design for deployment; B/C results |
+| `GLASSES.md` | glasses-rim fiducial: decision, accuracy, hardware findings |
+| `bin/rimcheck` | find real rims on a real camera; also measures the rig |
+| `bin/repeat` | within-session repeatability (the sensor-ceiling test) |
+| `bin/live` | standalone gaze cursor on the board's monitor |
+| **the game** | `~/claude/coder/games/bunny_feeding_frenzy` — see its `GAZE.md` |
 | `config.toml` | tuned values, each with a MEASURED comment saying why |
 | `hil` | dev-machine driver for board runs; `.hil.env` holds the address |
 
