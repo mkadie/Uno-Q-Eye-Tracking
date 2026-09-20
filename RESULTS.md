@@ -985,3 +985,63 @@ Sanity: outer span 61.5 + 50.0 = 111.5 mm leaves 12.8 mm per end piece of a
 
 Still `measured_n = 1`. The batch **spread over ten pairs** is the number that
 actually limits accuracy (±0.5 mm → 6.1 mm at 600 mm) and is still unmeasured.
+
+### Rim distance WORKS — 2026-09-19, measured against the marker board
+
+Paired frames, board held beside the face as ground truth, round orange
+glasses worn, 1920, exposure 312 / gain 192, at ~390 mm.
+
+| | value |
+|---|---|
+| board detection | 100%, steady to **±1.4 mm** |
+| annulus formed | **100%** (was 0% all session) |
+| rim pose produced | 85–92% of frames |
+| outer-edge lock | measured/expected radius **p50 = 1.000** |
+| paired error (rim − board) | **p50 −0.4 mm**, IQR 14.9 mm |
+| with a 5-frame median | p50 −1.8 mm, **std 6.9 mm** |
+
+The bias is essentially zero and the outer edge is being identified, not
+guessed — a lock on the inner edge would read 1.136 and a 13.6% scale error.
+The 5-frame median is free rather than a fudge: head pose is only sampled
+every `detect_every_n = 5` frames anyway.
+
+**Report this as percentiles, and here is why it matters.** Mean ± std says
+376.8 ± 37.7 mm and reads like a broken estimator. The sorted radii say
+otherwise:
+
+```
+81 82 83 83 83 83 84 84 84 84 84 84 84 84 84 85 85 ... 89 89 90 107
+p5 83.1   p25 84.5   p50 86.0   p75 88.2   p95 88.9
+```
+
+The core is tight to about ±1.2% with roughly 4–8% gross outliers, and the
+std is almost entirely those outliers. CLAUDE.md's convention caught a wrong
+conclusion here — the mean said "tune the detector", the percentiles said
+"reject outliers".
+
+**Independent confirmation of `separation_mm = 61.5`:** distance computed from
+the centre separation alone gives 388.1 mm against the board's 390.4 — a
+2.3 mm bias, without using the radius at all.
+
+**What made it work,** in order of size. None of these was a tuning change:
+
+1. `close_px = 3` → 0. Closing bridged the ~7–10 px rim gap and destroyed the
+   ring it was meant to rescue.
+2. `max_gradient()` instead of luminance. An orange rim on lit skin is nearly
+   isoluminant; grayscale never found the right lens in any frame.
+3. `separation_mm` 71.0 → 61.5 measured. The pair gate was aimed at 2.84 when
+   the truth is 2.46.
+4. Hough centres instead of `findContours`. The rim outline is present at the
+   right size but arrives broken and fused with brow and hair edges, so no
+   connected component is ever a ring. Voting does not care about
+   connectivity.
+5. `ring_radii()` — radial profile, median over 180 angles. This is what
+   finally produced an annulus: a gap costs a few angles and the median does
+   not move.
+
+**Still open:** the 4–8% outlier frames are not characterised — something else
+in the scene occasionally wins the Hough vote. `radius_mm = 25.0` may be ~2%
+off (Z from radius sat 13.6 mm low while Z from separation sat 2.3 mm low in
+the same frames). No distance ladder yet: this is one distance, ~390 mm, not
+the 450–700 mm sweep update.md asks for. Yaw is noisy (±12–16°) and untested
+against the board's yaw.

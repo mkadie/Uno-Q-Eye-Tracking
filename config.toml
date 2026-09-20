@@ -209,7 +209,7 @@ accent = "#eb6834"
 # 23.71 mm, and the mid-rim radius is 23.50. The detector was fitting the two
 # rim edges MERGED into a single mid-rim ellipse -- which is what update.md
 # section 2.2 predicts below ~960 px detect width, and we were at 1280.
-enabled         = false   # flip on once measured_n >= 5
+enabled         = true    # MEASURED: measured_n = 10, RigSpec.trusted True
 radius_mm       = 25.0    # OUTER radius; calipered outer diameter 50.0 mm
 inner_radius_mm = 22.0    # calipered inner diameter 44.0 mm
 separation_mm   = 61.5    # MEASURED 2026-09-19, and NOT the 71.0 placeholder
@@ -235,10 +235,16 @@ separation_mm   = 61.5    # MEASURED 2026-09-19, and NOT the 71.0 placeholder
                           # 2.46, so it was scoring every real pair as a poor
                           # match and preferring wrong ones. DISTANCE needs the
                           # radius alone and was never affected.
-measured_n      = 1       # one pair calipered. RigSpec.trusted wants 5.
-spread_mm       = 0.0     # unknown until ten pairs are measured. Spread is
-                          # what limits accuracy: +/-0.5 mm is 6.1 mm of
-                          # distance error at 600 mm, +/-1.0 mm is 12.1 mm.
+measured_n      = 10      # MEASURED 2026-09-19: ten pairs calipered.
+spread_mm       = 0.2     # MEASURED across all ten, and this is the good case.
+                          # Spread is what caps accuracy, because the batch is
+                          # only ever measured once:
+                          #   +/-0.2 mm ->  2.4 mm at 600 mm   <-- we are here
+                          #   +/-0.5 mm ->  6.1 mm
+                          #   +/-1.0 mm -> 12.1 mm
+                          # 2.4 mm is inside the 2-6 mm the annulus was
+                          # predicted to manage, so the glasses are not the
+                          # limiting factor -- the detector is.
 detect_every_n  = 5       # head pose moves slowly next to gaze
 
 # MEASURED 2026-09-19: rim detection needs its OWN exposure, not [camera]'s.

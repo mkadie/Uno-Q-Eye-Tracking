@@ -649,3 +649,76 @@ def test_max_gradient_survives_a_flat_image():
     out = ff.max_gradient(flat)
     assert out.shape == (32, 32)
     assert int(out.max()) == 0
+
+
+def _ring_gradient(a_outer, ratio, cx=300.0, cy=250.0, size=(500, 600),
+                   gap_deg=0):
+    """Gradient-like image of a ring: bright at both edges, dark between."""
+    h, w = size
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    r = np.hypot(xx - cx, yy - cy)
+    a_inner = a_outer / ratio
+    img = np.zeros((h, w), np.float32)
+    for edge in (a_outer, a_inner):
+        img += 255.0 * np.exp(-0.5 * ((r - edge) / 1.2) ** 2)
+    if gap_deg:
+        ang = np.degrees(np.arctan2(yy - cy, xx - cx)) % 360.0
+        img[(ang >= 0) & (ang < gap_deg)] = 0.0     # break the ring
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
+def test_ring_radii_finds_both_edges_and_rejects_the_wrong_ratio():
+    rig = RigSpec(radius_mm=25.0, inner_radius_mm=22.0, separation_mm=61.5)
+    img = _ring_gradient(60.0, rig.ring_ratio)
+    got = ff.ring_radii(img, 300.0, 250.0, 60.0, rig)
+    assert got is not None
+    outer, inner = got
+    assert abs(outer - 60.0) < 2.0
+    assert abs(inner - 60.0 / rig.ring_ratio) < 2.0
+    assert outer > inner                      # outer is IDENTIFIED, not guessed
+
+    # A ring at a coffee-lid ratio must be refused -- that is the whole point
+    # of the 1.1364 identity check.
+    lid = _ring_gradient(60.0, 1.060)
+    assert ff.ring_radii(lid, 300.0, 250.0, 60.0, rig) is None
+
+
+def test_ring_radii_survives_a_broken_ring():
+    """The median over angles is why this works where contours did not.
+
+    On a real face the rim arrives broken into arcs and fused with brow and
+    hair edges. A 60-degree gap costs a sixth of the angles and the median
+    does not move.
+    """
+    rig = RigSpec(radius_mm=25.0, inner_radius_mm=22.0, separation_mm=61.5)
+    img = _ring_gradient(60.0, rig.ring_ratio, gap_deg=60)
+    got = ff.ring_radii(img, 300.0, 250.0, 60.0, rig)
+    assert got is not None
+    assert abs(got[0] - 60.0) < 2.0
+
+
+def test_ring_ellipse_recovers_the_major_axis_under_foreshortening():
+    """Distance comes from the MAJOR axis (trap b), so that is what must be
+    accurate -- a profile median would land between major and minor."""
+    h, w = 500, 600
+    cx, cy, a, b = 300.0, 250.0, 70.0, 49.0      # ratio 0.70, ~46 deg tilt
+    img = np.zeros((h, w), np.float32)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    rad = np.hypot((xx - cx) / a, (yy - cy) / b)
+    img += 255.0 * np.exp(-0.5 * ((rad - 1.0) / 0.02) ** 2)
+    img = np.clip(img, 0, 255).astype(np.uint8)
+
+    e = ff.ring_ellipse(img, cx, cy, a)
+    assert e is not None
+    assert abs(e.a - a) < 0.05 * a
+    assert abs(e.b - b) < 0.10 * b
+    assert e.a >= e.b
+
+
+def test_ring_helpers_return_none_rather_than_guessing():
+    rig = RigSpec(radius_mm=25.0, inner_radius_mm=22.0, separation_mm=61.5)
+    blank = np.zeros((100, 100), np.uint8)
+    assert ff.ring_radii(blank, 50.0, 50.0, 20.0, rig) is None
+    assert ff.ring_ellipse(blank, 50.0, 50.0, 20.0) is None
+    # Off the edge of the image must not raise.
+    assert ff.ring_radii(blank, -500.0, -500.0, 20.0, rig) is None

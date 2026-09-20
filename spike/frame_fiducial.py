@@ -450,6 +450,201 @@ def max_gradient(bgr):
     return np.clip(acc / peak * 255.0, 0, 255).astype(np.uint8)
 
 
+def ring_radii(grad, cx, cy, r_hint, rig, span=0.45, n_ang=180,
+               ratio_tol=RING_RATIO_TOL):
+    """Find the OUTER and INNER radii of a rim by radial profile.
+
+    The annulus never formed with contour fitting, for a reason that has
+    nothing to do with the annulus: on a real face the rim outline arrives
+    broken into arcs and fused with brow and hair edges, so no connected
+    component is a ring. MEASURED 2026-09-19.
+
+    A radial profile sidesteps connectivity entirely. Walk outward from the
+    centre along many angles and take the MEDIAN edge strength at each radius.
+    A ring appears as two peaks; a gap in the ring costs a few angles out of
+    180 and the median does not notice. That is the property contour fitting
+    could not offer at any setting -- it is why this is a median and not a
+    mean, and why n_ang is large.
+
+    The two peaks are then required to sit at the rig's fixed 50.0/44.0 =
+    1.1364. That ratio is the identity check (a coffee lid is 1.060, a grommet
+    1.350) AND the answer to which edge is which, since the outer is simply
+    the larger. Mistaking inner for outer is a 13.6% scale error -- 82 mm at
+    600 mm -- and a single radius cannot tell.
+
+    Returns (outer_px, inner_px) or None.
+    """
+    import cv2
+
+    h, w = grad.shape[:2]
+    r_lo = max(3.0, r_hint * (1.0 - span))
+    r_hi = r_hint * (1.0 + span)
+    n_rad = max(16, int(round(r_hi - r_lo)) * 2)
+    radii = np.linspace(r_lo, r_hi, n_rad)
+    ang = np.linspace(0.0, 2.0 * math.pi, n_ang, endpoint=False)
+    ca, sa = np.cos(ang), np.sin(ang)
+
+    xs = (cx + np.outer(radii, ca)).astype(np.float32)
+    ys = (cy + np.outer(radii, sa)).astype(np.float32)
+    ok = (xs >= 0) & (xs < w - 1) & (ys >= 0) & (ys < h - 1)
+    if not ok.any():
+        return None
+    samp = cv2.remap(grad, xs, ys, cv2.INTER_LINEAR,
+                     borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    samp = np.where(ok, samp.astype(np.float32), np.nan)
+    with np.errstate(all="ignore"):
+        prof = np.nanmedian(samp, axis=1)
+    if not np.isfinite(prof).any():
+        return None
+    prof = np.nan_to_num(prof)
+
+    # Local maxima only: a shoulder on the side of a stronger edge is not a
+    # ring edge, and accepting one is how the midline gets reported as the rim.
+    peaks = [i for i in range(1, len(prof) - 1)
+             if prof[i] >= prof[i - 1] and prof[i] > prof[i + 1]]
+    if len(peaks) < 2:
+        return None
+    want = rig.ring_ratio
+    best, best_score = None, None
+    for i in peaks:
+        for j in peaks:
+            ro, ri = radii[i], radii[j]
+            if ro <= ri:
+                continue
+            if (ro - ri) < MIN_RING_SEPARATION_PX:
+                continue
+            if abs(ro / ri - want) / want > ratio_tol:
+                continue
+            # Prefer the strongest pair, not the closest ratio: ratio is
+            # already gated, and edge strength is what says "this is the rim"
+            # rather than a coincidence among weak texture peaks.
+            score = prof[i] + prof[j]
+            if best_score is None or score > best_score:
+                best, best_score = (float(ro), float(ri)), score
+    return best
+
+
+def ring_ellipse(grad, cx, cy, r_outer, band=0.14, n_ang=180, keep=0.75):
+    """Fit the outer rim edge from the GRADIENT image, one point per angle.
+
+    ring_radii() locates the outer edge from a median profile, which is robust
+    because it pools every angle. Throwing that away and refitting to binary
+    Canny pixels puts the clutter straight back -- brow and hair edges near
+    the rim drag the fit, and MEASURED 2026-09-19 that cost 28.8 mm of jitter
+    against a board steady to 3.2 mm.
+
+    So sample the gradient along each ray and take the single strongest
+    response inside a narrow band around the known outer radius. That yields
+    exactly one point per angle, on the strongest edge near where the rim
+    already is, and it cannot return two points from one ray or none. Then fit
+    those points, trimming the worst by radial residual -- an angle whose ray
+    crosses an eyebrow contributes one bad point, not a whole contour.
+
+    Distance still comes from the MAJOR axis of the result, which is the
+    unforeshortened one (trap b). That is why this fits an ellipse rather than
+    reporting the profile radius directly: the profile median pools over all
+    angles and so lands between the major and minor axes, which under yaw is
+    not the number the geometry wants.
+    """
+    import cv2
+
+    h, w = grad.shape[:2]
+    lo, hi = r_outer * (1.0 - band), r_outer * (1.0 + band)
+    n_rad = max(9, int(round(hi - lo)) * 3)
+    radii = np.linspace(lo, hi, n_rad)
+    ang = np.linspace(0.0, 2.0 * math.pi, n_ang, endpoint=False)
+
+    xs = (cx + np.outer(radii, np.cos(ang))).astype(np.float32)
+    ys = (cy + np.outer(radii, np.sin(ang))).astype(np.float32)
+    inb = (xs >= 0) & (xs < w - 1) & (ys >= 0) & (ys < h - 1)
+    samp = cv2.remap(grad, xs, ys, cv2.INTER_LINEAR,
+                     borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    samp = np.where(inb, samp.astype(np.float32), -1.0)
+
+    idx = np.argmax(samp, axis=0)
+    col = np.arange(n_ang)
+    good = samp[idx, col] > 0.0
+    if int(good.sum()) < 5:
+        return None
+    pts = np.stack([xs[idx, col][good], ys[idx, col][good]],
+                   axis=1).astype(np.float32)
+
+    e = None
+    for _ in range(3):
+        if len(pts) < 5:
+            return None
+        try:
+            e = Ellipse.from_cv(cv2.fitEllipse(pts.reshape(-1, 1, 2)))
+        except Exception:
+            return None
+        if e.a <= 0 or e.b <= 0:
+            return None
+        dx, dy = pts[:, 0] - e.cx, pts[:, 1] - e.cy
+        ct, st = math.cos(-e.theta), math.sin(-e.theta)
+        u, v = dx * ct - dy * st, dx * st + dy * ct
+        err = np.abs(np.hypot(u / e.a, v / e.b) - 1.0)
+        n_keep = max(5, int(len(pts) * keep))
+        if n_keep >= len(pts):
+            break
+        pts = pts[np.argsort(err)[:n_keep]]
+    return e
+
+
+def refine_ellipse(edge_img, cx, cy, r, band=0.30, iters=3, keep=0.80):
+    """Fit an ellipse to edge POINTS near a ring, ignoring contour connectivity.
+
+    MEASURED 2026-09-19, and the reason this exists: on a real face the rim
+    outline is present at the right size and the right place -- it is plainly
+    visible in the edge image -- but findContours never returns it as one
+    contour. It arrives broken into arcs AND fused with eyebrow and hair edges
+    that touch it, so every connected component is either a fragment or a
+    fragment plus clutter. Neither fits an ellipse, and the best-scoring
+    candidate in the whole frame was the EYE.
+
+    Morphological closing is the usual answer to a broken outline and is not
+    available here: a 3x3 close bridges the two rim edges, which are only
+    ~7-10 px apart, and destroys the annulus outright.
+
+    So do not ask which pixels are connected -- ask which pixels lie near a
+    ring of about the right radius, and fit those. Trimmed reweighting then
+    walks off the clutter: fit, drop the worst points by radial residual,
+    refit. Connectivity was never the information we wanted.
+    """
+    import cv2
+
+    ys, xs = np.nonzero(edge_img)
+    if xs.size < 5:
+        return None
+    d = np.hypot(xs - cx, ys - cy)
+    m = (d > r * (1.0 - band)) & (d < r * (1.0 + band))
+    if int(m.sum()) < 5:
+        return None
+    pts = np.stack([xs[m], ys[m]], axis=1).astype(np.float32)
+
+    e = None
+    for _ in range(max(1, iters)):
+        if len(pts) < 5:
+            return None
+        try:
+            e = Ellipse.from_cv(cv2.fitEllipse(pts.reshape(-1, 1, 2)))
+        except Exception:
+            return None
+        # Radial residual in the ellipse's own frame: rotate into the axes,
+        # then measure how far each point is from the unit ellipse.
+        dx, dy = pts[:, 0] - e.cx, pts[:, 1] - e.cy
+        ct, st = math.cos(-e.theta), math.sin(-e.theta)
+        u, v = dx * ct - dy * st, dx * st + dy * ct
+        if e.a <= 0 or e.b <= 0:
+            return None
+        rad = np.hypot(u / e.a, v / e.b)
+        err = np.abs(rad - 1.0)
+        n_keep = max(5, int(len(pts) * keep))
+        if n_keep >= len(pts):
+            break
+        pts = pts[np.argsort(err)[:n_keep]]
+    return e
+
+
 def find_rims(gray, rig, fx, expected_distance_mm=600.0, tolerance=0.45,
               canny=(40, 120), min_coverage=0.40, max_residual=0.06,
               close_px=0, clahe=False, annulus=False):
