@@ -959,3 +959,29 @@ PLACEHOLDER, and the pair test depends on it, so the ratio gate is currently
 being judged against a guess. The single-edge fallback is useless and should
 not be trusted at all — it wanders across the room (fit centre std 326 px)
 and was measuring a fan and a cardboard box.
+
+### separation_mm measured — 61.5 mm, and the estimate was wrong
+
+The one number update.md flagged as MISSING. Measured across the two **inner**
+circles, twice, so the reading checks itself:
+
+| reading | value | relation |
+|---|---|---|
+| closest inside points | 18 mm | sep − inner_d |
+| farthest inside points | 105 mm | sep + inner_d |
+
+→ inner_d = (105 − 18)/2 = **43.5 mm**, sep = **61.5 mm from both readings**.
+The implied 43.5 also agrees with the separately calipered inner diameter of
+44.0 to 0.5 mm, so three measurements are mutually consistent.
+
+**61.5 is outside the 67–75 mm predicted from the 137 mm frame width** — the
+prediction was 15.4% high. The 71.0 placeholder made the pair test hunt for a
+separation/radius of 2.84 when the truth is 2.46, so it was scoring every
+genuine rim pair as a poor match and could prefer a wrong one. Distance comes
+from the radius alone and was never affected.
+
+Sanity: outer span 61.5 + 50.0 = 111.5 mm leaves 12.8 mm per end piece of a
+137 mm frame, typical for a chunky costume frame; 71.0 would have left 8 mm.
+
+Still `measured_n = 1`. The batch **spread over ten pairs** is the number that
+actually limits accuracy (±0.5 mm → 6.1 mm at 600 mm) and is still unmeasured.

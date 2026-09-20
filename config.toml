@@ -212,10 +212,29 @@ accent = "#eb6834"
 enabled         = false   # flip on once measured_n >= 5
 radius_mm       = 25.0    # OUTER radius; calipered outer diameter 50.0 mm
 inner_radius_mm = 22.0    # calipered inner diameter 44.0 mm
-separation_mm   = 71.0    # PLACEHOLDER -- MEASURE. Expected 67-75 from the
-                          # 137 mm frame width. Gates yaw and the span check
-                          # only; DISTANCE needs the radius alone, so distance
-                          # testing does not have to wait for this.
+separation_mm   = 61.5    # MEASURED 2026-09-19, and NOT the 71.0 placeholder
+                          # nor inside the 67-75 mm that was estimated from the
+                          # 137 mm frame width. The estimate was 15.4% high.
+                          #
+                          # Measured twice over the two INNER circles, which
+                          # cross-checks itself:
+                          #   closest inside points  18 mm = sep - inner_d
+                          #   farthest inside points 105 mm = sep + inner_d
+                          # -> inner_d = (105-18)/2 = 43.5, sep = 61.5 from
+                          # BOTH readings. The 43.5 also agrees with the
+                          # separately calipered inner diameter of 44.0 to
+                          # 0.5 mm, so three numbers are mutually consistent.
+                          #
+                          # Sanity: outer span = 61.5 + 50.0 = 111.5 mm, which
+                          # leaves 12.8 mm per end piece of a 137 mm frame --
+                          # typical for a chunky costume frame, where 71.0
+                          # would have left only 8 mm.
+                          #
+                          # This gates yaw and the pair test. The pair test was
+                          # hunting for separation/radius 2.84 when the truth is
+                          # 2.46, so it was scoring every real pair as a poor
+                          # match and preferring wrong ones. DISTANCE needs the
+                          # radius alone and was never affected.
 measured_n      = 1       # one pair calipered. RigSpec.trusted wants 5.
 spread_mm       = 0.0     # unknown until ten pairs are measured. Spread is
                           # what limits accuracy: +/-0.5 mm is 6.1 mm of

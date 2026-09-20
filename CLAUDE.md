@@ -120,10 +120,20 @@ purely as a visitor-identity label.
 stays False until `measured_n >= 5`.
 
 **CALIPERED 2026-09-19** (supersedes the photo-derived values): outer diameter
-**50.0 mm**, inner **44.0 mm**, rim 3.0 mm. Centre-to-centre separation is
-**still missing** — expected 67–75 mm from the 137 mm frame width. Distance
-needs the radius alone, so distance testing does not wait on it; it gates yaw
-and the span check only.
+**50.0 mm**, inner **44.0 mm**, rim 3.0 mm, centre-to-centre separation
+**61.5 mm**.
+
+The separation is **not** the 67–75 mm that was estimated from the 137 mm frame
+width — that estimate was 15.4% high, and the 71.0 placeholder built on it made
+the pair test hunt for a separation/radius of 2.84 when the truth is 2.46. It
+was scoring every genuine pair as a poor match. Measure this number; do not
+derive it from the frame width.
+
+It was measured twice over the two INNER circles so it checks itself: closest
+inside points 18 mm = sep − inner_d, farthest inside points 105 mm =
+sep + inner_d, giving inner_d = 43.5 and sep = 61.5 from **both** readings —
+and that 43.5 agrees with the separately calipered 44.0 to 0.5 mm. Distance
+needs the radius alone and was never affected.
 
 The product photo is labelled 1.85 in = 47.0 mm and that is the **mid-rim**
 diameter, not the outer — scaling off it gave 23.5 where the truth is 25.0.
