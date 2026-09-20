@@ -559,3 +559,52 @@ def test_ring_pair_still_accepts_quality_free_ellipses():
     inner = ff.Ellipse(cx=300.0, cy=200.0, a=52.8, b=51.0, theta=0.0)
     assert outer.coverage is None
     assert ff.ring_pair([outer, inner], rig) == (outer, inner)
+
+
+def _blank(w=W, h=H):
+    return np.zeros((h, w), np.uint8)
+
+
+def test_squares_are_not_rims():
+    """A square passes every roundness test there is.
+
+    MEASURED 2026-09-19: the four ArUco markers of the printed rig were all
+    being reported as flawless rims -- cv2.fitEllipse on a square contour
+    returns axis_ratio 1.00 and arc coverage 1.00. Only the fit residual tells
+    them apart (markers 0.100-0.106, a real rim 0.031), which is why
+    max_residual is 0.06 rather than the 0.18 it was.
+
+    This is not a marker-board curiosity. A maker faire is full of screens,
+    keycaps, boxes and picture frames, and every one of them is a square.
+    """
+    rig = RigSpec(radius_mm=25.0, inner_radius_mm=22.0, separation_mm=71.0)
+    z = 533.0
+    a = FX * rig.radius_mm / z                      # 64 px at this distance
+
+    img = _blank()
+    # Two squares the size and spacing of a real rim pair -- i.e. the most
+    # favourable possible case for a false positive.
+    for cx in (int(W / 2 - FX * rig.separation_mm / z / 2),
+               int(W / 2 + FX * rig.separation_mm / z / 2)):
+        cv2.rectangle(img, (cx - int(a), 400 - int(a)),
+                      (cx + int(a), 400 + int(a)), 255, 3)
+    assert ff.find_rims(img, rig, FX, expected_distance_mm=z) is None
+
+
+def test_real_circles_still_found_at_the_tighter_residual():
+    """The square gate must not be satisfiable by rejecting everything."""
+    rig = RigSpec(radius_mm=25.0, inner_radius_mm=22.0, separation_mm=71.0)
+    z = 533.0
+    a = FX * rig.radius_mm / z
+    sep = FX * rig.separation_mm / z
+
+    img = _blank()
+    for cx in (int(W / 2 - sep / 2), int(W / 2 + sep / 2)):
+        cv2.circle(img, (cx, 400), int(round(a)), 255, 2)
+    found = ff.find_rims(img, rig, FX, expected_distance_mm=z)
+    assert found is not None
+    left, right = found
+    assert left.cx < right.cx
+    # Distance from the major axis, trap (b).
+    for e in (left, right):
+        assert abs(FX * rig.radius_mm / e.a - z) < 0.06 * z

@@ -412,7 +412,7 @@ def ring_pair(ellipses, rig, ratio_tol=RING_RATIO_TOL,
 
 
 def find_rims(gray, rig, fx, expected_distance_mm=600.0, tolerance=0.45,
-              canny=(40, 120), min_coverage=0.40, max_residual=0.18,
+              canny=(40, 120), min_coverage=0.40, max_residual=0.06,
               close_px=3, clahe=False, annulus=False):
     """Locate the two rims by SHAPE. Returns (left, right) or None.
 
@@ -432,6 +432,19 @@ def find_rims(gray, rig, fx, expected_distance_mm=600.0, tolerance=0.45,
     to 40.3 px against a true 42.0. What makes that safe is not this gate but
     the pair-level scale-invariant ratio check below, which no accidental pair
     has ever passed.
+
+    MEASURED 2026-09-19, and the reason max_residual is 0.06 and not the 0.18
+    it used to be: A SQUARE IS A PERFECT ELLIPSE BY EVERY OTHER TEST. Fitting
+    cv2.fitEllipse to the contour of an ArUco marker returns axis_ratio 1.00
+    and arc coverage 1.00 -- it passes the roundness gate and the coverage
+    gate outright, and at 0.18 it passed the residual gate too. All four
+    markers of the printed rig were being reported as flawless rims.
+
+    Residual is the ONLY gate that separates them, and it separates them
+    cleanly: the markers sat at 0.100-0.106 while a real rim in the same
+    session scored 0.031. 0.06 is the midpoint. This matters well beyond the
+    marker board -- screens, keycaps, boxes and picture frames are everywhere
+    a faire will put them, and every one of them is a square.
 
     `clahe` defaults OFF: it rescued a badly underlit room but costs contrast
     fidelity, and with adequate light the raw image fits better. Turn it on
