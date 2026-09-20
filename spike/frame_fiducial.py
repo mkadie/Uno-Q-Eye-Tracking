@@ -411,9 +411,48 @@ def ring_pair(ellipses, rig, ratio_tol=RING_RATIO_TOL,
     return best
 
 
+def max_gradient(bgr):
+    """Single-channel edge-strength image: the per-pixel MAX gradient across
+    B, G, R, a* and b*.
+
+    MEASURED 2026-09-19 on the orange glasses, same frames, only the edge
+    image different:
+        grayscale   2 candidates survived, and the RIGHT lens was never found
+        max_gradient 7 survived, both lenses found, pair test ACCEPT
+    Grayscale could not see the right rim in any frame of the session.
+
+    Why: an orange rim against brightly lit skin is close to isoluminant, so
+    the rim-to-skin boundary barely exists in luminance while being obvious in
+    b*. The left lens survived in grayscale only because it happened to sit
+    against the dark eye socket.
+
+    This is NOT the colour thresholding that CLAUDE.md rules out, and the
+    distinction is the point: a threshold picks a colour and a cut, so it is
+    tuned at setup and drifts by lunchtime. Taking the max gradient picks no
+    colour and has no cut -- it says only "an edge in any channel is an edge",
+    which is equally true of all five rim colours and of a hall whose lights
+    change. The ellipse is still found geometrically and colour is still read
+    afterwards purely as an identity label.
+    """
+    import cv2
+
+    lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+    acc = None
+    for ch in (bgr[:, :, 0], bgr[:, :, 1], bgr[:, :, 2],
+               lab[:, :, 1], lab[:, :, 2]):
+        b = cv2.GaussianBlur(ch, (5, 5), 0).astype(np.float32)
+        m = np.hypot(cv2.Sobel(b, cv2.CV_32F, 1, 0, ksize=3),
+                     cv2.Sobel(b, cv2.CV_32F, 0, 1, ksize=3))
+        acc = m if acc is None else np.maximum(acc, m)
+    peak = float(acc.max())
+    if peak <= 1e-6:
+        return np.zeros(acc.shape, np.uint8)
+    return np.clip(acc / peak * 255.0, 0, 255).astype(np.uint8)
+
+
 def find_rims(gray, rig, fx, expected_distance_mm=600.0, tolerance=0.45,
               canny=(40, 120), min_coverage=0.40, max_residual=0.06,
-              close_px=3, clahe=False, annulus=False):
+              close_px=0, clahe=False, annulus=False):
     """Locate the two rims by SHAPE. Returns (left, right) or None.
 
     Detection is deliberately geometric and never colour-based. Five rim
@@ -463,9 +502,21 @@ def find_rims(gray, rig, fx, expected_distance_mm=600.0, tolerance=0.45,
 
     edges = cv2.Canny(gray, canny[0], canny[1])
     if close_px:
-        # Rim outlines come back broken into arcs on a real face. Closing
-        # bridges the small gaps WITHOUT inventing a circle where there is
-        # none -- the coverage test below still has to pass.
+        # MEASURED 2026-09-19, and the reason this now defaults OFF: closing
+        # is INCOMPATIBLE WITH THE ANNULUS. The two edges of a 3 mm rim are
+        # about 7 px apart at 1920, and a 3x3 close bridges them -- it fuses
+        # the ring into one thick blob whose contour no longer fits an
+        # ellipse at all. Same scene, same frame, only this line different:
+        #     close_px = 3  ->  0 candidates survived cov>=0.40 & res<=0.06
+        #     close_px = 0  ->  3 survived, including the rim at res 0.044
+        # So it was not merely unhelpful, it was deleting the signal it was
+        # added to rescue, and silently -- the failure looks like "the rim
+        # was not visible".
+        #
+        # Left available because a genuinely broken outline in a dim room is
+        # a real case, but anything above 0 forfeits annulus mode: use it
+        # only with annulus=False, and expect the radius you get to be the
+        # midline rather than the outer edge.
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_px, close_px))
         edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, k)
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST,

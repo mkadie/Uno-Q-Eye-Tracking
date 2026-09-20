@@ -896,3 +896,66 @@ ellipses still pass. Two tests pin both halves; 149 passing.
 session's captures turned out to be of ordinary rectangular prescription
 glasses, not the round pair — see GLASSES.md on why a non-circular outline
 cannot work. The distance ladder (update.md §4.1) is still unrun.
+
+## 2026-09-19 — first rim pose on hardware, and two bugs that were hiding it
+
+Paired run with the marker board held beside the face and the round orange
+glasses on, so ground truth and the rim estimate come from the SAME frames.
+
+**The board is an excellent ruler.** 79–100% detection, distance stable to
+**±1.0–2.9 mm**. That is the precision the rims have to beat, and it is
+measured rather than assumed. `reproj` sits at **1.27–1.47 px**, above the
+1 px threshold — most likely the printed board is not at exactly 100% scale.
+Measure the 100 mm ruler on the printout; a 3% scale error walks straight
+into every distance.
+
+**Bug 1: `close_px = 3` was deleting the rim.** Morphological closing was on
+by default to bridge broken outlines. The two edges of a 3 mm rim are ~7 px
+apart at 1920, so a 3×3 close *bridges them* — it fuses the ring into one
+thick blob whose contour no longer fits an ellipse. Same scene, same frame,
+only that line different:
+
+| close_px | candidates surviving cov≥0.40 & res≤0.06 |
+|---|---|
+| 3 | **0** |
+| 0 | 3, including the rim at res 0.044 |
+
+It was deleting the signal it was added to rescue, and silently — the failure
+presents as "the rim was not visible". Now defaults to 0. Anything above 0
+forfeits annulus mode entirely.
+
+**Bug 2: grayscale cannot see an orange rim on lit skin.** They are close to
+isoluminant, so the rim-to-skin boundary barely exists in luminance. The left
+lens survived only because it happened to sit against the dark eye socket; the
+right lens was **never found in any frame of the session**. Taking the
+per-pixel max gradient across B, G, R, a* and b* (`max_gradient()`):
+
+| edge image | survivors | lenses found | pair test |
+|---|---|---|---|
+| grayscale | 2 | left only | reject |
+| max_gradient | 7 | **both** | **ACCEPT** |
+
+This is not the colour thresholding CLAUDE.md rules out, and the distinction
+matters: a threshold picks a colour and a cut, so it is tuned at setup and
+drifts by lunchtime. Max gradient picks no colour and has no cut — "an edge in
+any channel is an edge" is equally true of all five rim colours and of a hall
+whose lights change. The ellipse is still found geometrically.
+
+**Also fixed: a square is a perfect ellipse by every gate but residual.** All
+four ArUco markers were being reported as flawless rims — `fitEllipse` on a
+square contour gives axis_ratio 1.00 and coverage 1.00. Only residual
+separates them (markers 0.100–0.106, real rim 0.021–0.044), so `max_residual`
+went 0.18 → 0.06. Relevant well beyond the board: a faire is full of screens,
+keycaps and picture frames.
+
+**First rim pose on hardware:** pair mode (no annulus) 704.6 ± 14.2 mm against
+a board reading of 632.6 mm. Yield is only 5% of frames and the annulus has
+still never formed, so this is a proof of life, **not** a measurement. Do not
+quote it.
+
+**Still open:** annulus 0% — the inner edge is not resolving even with
+max_gradient. Pair yield 5% is far too low. `separation_mm = 71.0` is still a
+PLACEHOLDER, and the pair test depends on it, so the ratio gate is currently
+being judged against a guess. The single-edge fallback is useless and should
+not be trusted at all — it wanders across the room (fit centre std 326 px)
+and was measuring a fan and a cardboard box.

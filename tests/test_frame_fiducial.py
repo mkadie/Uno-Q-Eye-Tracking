@@ -608,3 +608,44 @@ def test_real_circles_still_found_at_the_tighter_residual():
     # Distance from the major axis, trap (b).
     for e in (left, right):
         assert abs(FX * rig.radius_mm / e.a - z) < 0.06 * z
+
+
+def test_max_gradient_sees_an_isoluminant_edge_that_grayscale_cannot():
+    """The reason the right lens was invisible for a whole session.
+
+    An orange rim against brightly lit skin is close to isoluminant: the
+    boundary barely exists in luminance while being obvious in b*. Construct
+    exactly that -- two colours with the same BGR->GRAY luma and different
+    chroma -- and check each edge image for the boundary.
+
+    MEASURED on hardware, same frames: grayscale found 2 candidates and never
+    the right lens in any frame; max_gradient found 7 and both lenses.
+    """
+    # cv2's BGR->GRAY is 0.114 B + 0.587 G + 0.299 R.
+    def luma(b, g, r):
+        return 0.114 * b + 0.587 * g + 0.299 * r
+
+    skin = (120, 150, 190)
+    rim = (60, 163, 190)
+    assert abs(luma(*skin) - luma(*rim)) < 1.5      # same brightness
+    assert abs(skin[0] - rim[0]) > 50               # different colour
+
+    img = np.zeros((200, 200, 3), np.uint8)
+    img[:, :] = skin
+    cv2.circle(img, (100, 100), 50, rim, 6)
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    assert cv2.Canny(gray, 40, 120).sum() == 0, "test is not isoluminant"
+
+    mg = ff.max_gradient(img)
+    assert mg.shape == gray.shape
+    assert mg.dtype == np.uint8
+    assert cv2.Canny(mg, 40, 120).sum() > 0
+
+
+def test_max_gradient_survives_a_flat_image():
+    """No gradient anywhere must not divide by zero."""
+    flat = np.full((32, 32, 3), 77, np.uint8)
+    out = ff.max_gradient(flat)
+    assert out.shape == (32, 32)
+    assert int(out.max()) == 0

@@ -26,7 +26,7 @@ from spike import rig_geometry
 from spike.marker_board import MarkerBoard
 from spike.frame_fiducial import (RigSpec, Ellipse, arc_quality, ring_pair,
                                   find_rims, pose_from_rims, plausible,
-                                  MIN_RING_SEPARATION_PX)
+                                  max_gradient, MIN_RING_SEPARATION_PX)
 
 N = 60
 USE_BOARD = True
@@ -67,7 +67,8 @@ for _ in range(12):
 # last good rim distance forward. Never a hardcoded guess -- the size gate is
 # +/-45%, so a bad seed silently excludes the true rim.
 seed = 600.0
-rows, n_board, n_annulus, n_single, n_frames = [], 0, 0, 0, 0
+rows, n_board, n_annulus, n_pair, n_single, n_frames = [], 0, 0, 0, 0, 0
+singles = []
 t0 = time.time()
 while n_frames < N and time.time() - t0 < 90:
     f = cam.read()
@@ -75,6 +76,9 @@ while n_frames < N and time.time() - t0 < 90:
         continue
     n_frames += 1
     g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+    # The board is black-on-white and wants luminance; the rims are
+    # orange-on-skin and are nearly invisible in it. Different images.
+    ge = max_gradient(f)
 
     bp = board.detect(g) if USE_BOARD else None
     if bp is not None:
@@ -83,7 +87,7 @@ while n_frames < N and time.time() - t0 < 90:
 
     # Annulus first: it IDENTIFIES the outer edge instead of guessing.
     rim_mm, mode, rp = None, "-", None
-    r = find_rims(g, rig, it.fx, expected_distance_mm=seed, annulus=True)
+    r = find_rims(ge, rig, it.fx, expected_distance_mm=seed, annulus=True)
     if r is not None:
         rp = pose_from_rims(r[0], r[1], rig, it.fx, it.fy, it.cx, it.cy,
                             pitch_hint_deg=0.0)
@@ -91,10 +95,25 @@ while n_frames < N and time.time() - t0 < 90:
             rim_mm, mode = rp["distance_mm"], "annulus"
             n_annulus += 1
     if rim_mm is None:
+        # PAIR mode, no annulus: two rims at the right separation-to-radius
+        # ratio. Weaker than the annulus because which edge we locked onto is
+        # GUESSED rather than identified -- inner mistaken for outer is a
+        # 13.6% scale error -- but it is a real pair constraint, which is more
+        # than a single ellipse can ever offer. update.md's ladder wants this
+        # as its own column for exactly that reason.
+        r2 = find_rims(ge, rig, it.fx, expected_distance_mm=seed, annulus=False)
+        if r2 is not None:
+            p2 = pose_from_rims(r2[0], r2[1], rig, it.fx, it.fy, it.cx, it.cy,
+                                pitch_hint_deg=0.0)
+            if plausible(p2, rig):
+                rim_mm, mode, rp = p2["distance_mm"], "pair", p2
+                n_pair += 1
+
+    if rim_mm is None:
         # Fallback: best single round candidate, scored as the OUTER edge.
         # Reported separately and never mixed into the annulus statistics --
         # if it is really the midline this is 6% low and nothing says so.
-        edges = cv2.Canny(g, 40, 120)
+        edges = cv2.Canny(ge, 40, 120)
         cs, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
         ea = it.fx * rig.radius_mm / seed
         best = None
@@ -108,13 +127,18 @@ while n_frames < N and time.time() - t0 < 90:
             if not (ea * 0.55 <= e.a <= ea * 1.45) or e.axis_ratio < 0.70:
                 continue
             cov, res = arc_quality(cc, e)
-            if cov < 0.45 or res > 0.10:
+            # Same 0.06 residual gate as find_rims. Scoring by cov*ratio was
+            # actively wrong here: a SQUARE scores 1.00 on both, so the
+            # fallback was ranking background boxes above the real rim and
+            # reporting an implied radius of 35 mm. Rank by fit residual --
+            # the one statistic a square cannot fake.
+            if cov < 0.45 or res > 0.06:
                 continue
-            score = cov * e.axis_ratio
-            if best is None or score > best[0]:
-                best = (score, e, cov)
+            if best is None or res < best[0]:
+                best = (res, e, cov)
         if best is not None:
             rim_mm, mode = it.fx * rig.radius_mm / best[1].a, "single"
+            singles.append((best[1], best[0], best[2]))
             n_single += 1
 
     if bp is not None or rim_mm is not None:
@@ -126,9 +150,11 @@ while n_frames < N and time.time() - t0 < 90:
 
 cam.close()
 
-print("frames %d | board %d (%.0f%%) | rim annulus %d (%.0f%%) | rim single %d (%.0f%%)"
+print("frames %d | board %d (%.0f%%) | annulus %d (%.0f%%) | pair %d (%.0f%%)"
+      " | single %d (%.0f%%)"
       % (n_frames, n_board, 100.0*n_board/max(n_frames,1),
          n_annulus, 100.0*n_annulus/max(n_frames,1),
+         n_pair, 100.0*n_pair/max(n_frames,1),
          n_single, 100.0*n_single/max(n_frames,1)))
 
 bd = [r[0] for r in rows if r[0] is not None]
@@ -137,7 +163,7 @@ if bd:
     print("\nBOARD  distance %.1f +/- %.1f mm   reproj %.2f px (>1 px means the"
           " geometry or intrinsics are wrong)" % (np.mean(bd), np.std(bd), np.mean(rj)))
 
-for want in ("annulus", "single"):
+for want in ("annulus", "pair", "single"):
     v = [r[3] for r in rows if r[4] == want and r[3] is not None]
     if not v:
         continue
@@ -154,3 +180,13 @@ for want in ("annulus", "single"):
 
 if not rows:
     print("\nnothing detected at all -- check the frame is in view and lit")
+
+if singles:
+    xs = np.array([[e.cx, e.cy, e.a, r, c] for e, r, c in singles])
+    print("\nsingle-edge fits: a %.1f +/- %.1f px at (%.0f +/- %.0f, %.0f +/- %.0f)"
+          "  res %.3f  cov %.2f"
+          % (xs[:,2].mean(), xs[:,2].std(), xs[:,0].mean(), xs[:,0].std(),
+             xs[:,1].mean(), xs[:,1].std(), xs[:,3].mean(), xs[:,4].mean()))
+    if xs[:,0].std() > 150 or xs[:,1].std() > 150:
+        print("    WANDERING -- these are not one object, so the distance above"
+              " is meaningless")
