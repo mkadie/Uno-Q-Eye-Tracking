@@ -159,6 +159,24 @@ Camera intrinsics are calibrated (RMS 0.306 px, fx/fy agree to 0.2%). Every
 distance is `f × size / pixels`, so an error in `f` is proportional error in
 everything — larger than the difference between any two fiducial designs.
 
+## Demos
+
+**Bunny Feeding Frenzy** — gaze-aimed arcade game, ~3.5 deg with a 9-point
+grid. Seats the player before calibrating.
+
+**T-Rex Talker 3.0** (`bin/talker`) — a 3x2 AAC board: gaze aims, SPACE/ENTER
+speaks. Reads the device's real `.menu` files and plays its real recorded
+clips. 3x2 because at 504 mm a cell is 640x540 px and 2x the measured error
+needs 327 px at the mean, 556 at p95 — 3x2 is comfortable, 4x2 is tight on
+both axes. **Status: runs, gives "some control, but very jumpy", not yet a
+successful demo.** Cell hysteresis was added in response and is untested.
+
+**The open question that decides the next move:** nobody has measured the
+sample-to-sample noise of the gaze point *during a fixation*. That single
+measurement separates "a filtering and UX problem" from "the landmark estimate
+is too noisy at this working distance", and they call for completely different
+fixes. Do it before changing trackers.
+
 ## Open
 
 1. Repeat Gate 1c in good light — the 3.27° run was dim (face 55.4 vs 128.7).
@@ -168,3 +186,6 @@ everything — larger than the difference between any two fiducial designs.
    19° of noise.
 4. Make linear the spike's default too (the game already switched); it needs
    its own fresh run rather than a refit.
+5. Measure fixation noise (above) before evaluating any alternative tracker.
+6. `bin/talker` hardcodes the screen size from config; it should read the
+   actual display, so a board that comes up at 1024x768 is not drawn broken.
