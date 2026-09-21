@@ -320,9 +320,11 @@ question: 477 px -> 164 px.
 
 Two fitting bugs got it there, neither visible in the training error:
 
-- **`points = 9` was never enough.** 66 parameters, 9 points, trains on 8.
-  9 points gave 8.4-8.5 deg where 25 gave 2.34 on the same session and the
-  same 26 validation targets. `config.toml` now says 25.
+- **`points = 9` was never enough FOR THE DEGREE-2 MODEL.** 66 parameters, 9
+  points, trains on 8. 9 points gave 8.4-8.5 deg where 25 gave 2.34 on the
+  same session and the same 26 validation targets. `config.toml` now says 25.
+  **Read this together with the model finding below** -- with the linear
+  model, 9 points is fine (3.49 deg) and the long grid is not worth it.
 - **`ridge = "auto"` used leave-one-out CV, which under-regularises here.**
   Calibration samples are collected over ~112 s and are temporally
   correlated, so LOO leaves a held-out point's own time-neighbours in the
@@ -336,6 +338,38 @@ Two fitting bugs got it there, neither visible in the training error:
 worse they overfitted, the better they looked. Never judge a calibration by
 its training error; `auto` picked 100, 10, 1 and 0.1 across four runs of the
 same subject at the same task.
+
+**THE 7-PARAMETER LINEAR MODEL BEATS THE 66-PARAMETER DEGREE-2 POLYNOMIAL AT
+EVERY POINT COUNT TRIED.** MEASURED 2026-09-21, scored on the same 26 held-out
+targets:
+
+| calibration points | `LinearMapper` (7 par) | `GazeMapper` poly2 (66 par) |
+|---|---|---|
+| 9 | **3.49 deg** | 8.37 deg |
+| 25 | **3.01 deg** | 3.27 deg |
+
+`LinearMapper` uses six features -- both iris x/y, yaw, pitch -- plus a bias.
+Dropping `roll`, `t_x`, `t_y`, `t_z` and every quadratic term costs nothing
+measurable and buys a model that cannot overfit a short grid. **9 points plus
+linear is within half a degree of a 25-point fit at a third of the sitting**,
+which is the whole argument for a short grid in a faire queue.
+
+This reframes the headline above: 3.27 deg came from 25 points plus the
+blocked-CV fix, but **3.49 deg was available all along** from 9 points and a
+linear fit. The blocked-CV work was still necessary -- it is what makes poly2
+safe at 25 points -- but poly2 probably should not be the default.
+
+**The spike still defaults to poly2 above 16 points.** The bunny game has been
+switched to linear for any grid it will present. Changing the spike deserves
+its own fresh run rather than a refit, since every number above comes from
+data collected for a different model. Do not reach for more model before more
+light, more points, or a better seating distance.
+
+**Do not choose the ridge by sweeping it against the validation set.** That is
+what the held-out set exists to prevent. Doing it produced two
+attractive-looking numbers on 2026-09-21 (5.63 and 2.91 deg) that are **not
+accuracy**; the 3.27 deg figure is a fresh run whose penalty came from
+training data alone.
 
 **`viewing_distance_mm` is 504, not the 584 it said for months.** Every
 angular error scales directly with it, so 584 inflated every degree figure by
