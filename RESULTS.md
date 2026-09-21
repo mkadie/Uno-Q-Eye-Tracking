@@ -1045,3 +1045,62 @@ off (Z from radius sat 13.6 mm low while Z from separation sat 2.3 mm low in
 the same frames). No distance ladder yet: this is one distance, ~390 mm, not
 the 450–700 mm sweep update.md asks for. Yaw is noisy (±12–16°) and untested
 against the board's yaw.
+
+## 2026-09-20 — DISTANCE LADDER (update.md §4.1), glasses vs marker board
+
+Board rested against the **temple arm** so its plane sits level with the
+lenses; rim and board measured on the same frames, ~50 frames per rung, 1920,
+exposure 312 / gain 192.
+
+| target | board (truth) | rim p50 | error p50 | error IQR | detection |
+|---|---|---|---|---|---|
+| 450 | 441.3 ± 1.7 | 417.2 | −24.4 | 14.7 | 77% |
+| 500 | 492.1 ± 2.9 | 467.7 | −24.6 | 30.4 | 86% |
+| 550 | 545.4 ± 4.2 | 528.9 | **−17.2** | **3.7** | **100%** |
+| 600 | 599.7 ± 5.3 | 574.3 | −25.1 | 12.1 | 88% |
+| 650 | 644.9 ± 2.1 | 641.9 | −3.2 | 5.4 | 89% |
+| 700 | 694.2 ± 2.0 | 673.5 | −19.8 | 12.2 | 57% |
+
+**The bias is a fixed plane offset, not a radius error.** This is the question
+the ladder exists to answer, and the two hypotheses separate cleanly because
+one is constant and the other is proportional:
+
+| model | residual |
+|---|---|
+| constant offset | **7.7 mm rms** |
+| proportional (radius wrong) | 9.6 mm rms |
+
+corr(distance, error) = +0.50 — no clean distance trend. So `radius_mm = 25.0`
+is **not** measurably wrong, and the −22.1 mm median is the card sitting behind
+the lens plane: the temple arm runs backward from the frame front, so a card
+flat against it is ~2 cm behind the lenses. That subtracts out. The earlier
+suspicion that `radius_mm` was ~2% high is **not supported** — it came from a
+single distance, where a plane offset and a scale error are indistinguishable.
+
+**After subtracting the median bias**, per-rung residual is 8.2 mm rms, max
+18.9 mm — and that spread is board *repositioning* between rungs, not the
+detector: 650 mm is the outlier at +18.9 and it is also the rung with the best
+board stability (±2.1), i.e. a well-held card in a slightly different place.
+
+**Detector precision is the within-rung IQR:** median **12.1 mm**, best
+**3.7 mm at 550**, worst 30.4 mm at 500. The 550 rung — 100% detection,
+3.7 mm IQR — shows what this method can do when the pose is square and the
+card is steady. update.md predicted 2–6 mm for the rim annulus; that is met at
+550 and 650 and missed elsewhere.
+
+**Detection falls off at 700 mm (57%)** and the reason is geometric, not
+tuning: the annulus gap is 9.1 px at 450 but only **5.9 px at 700**, against a
+`MIN_RING_SEPARATION_PX` floor of 4.0. The two rim edges are running out of
+pixels. corr(distance, detection) = −0.36. **700 mm is near the working limit
+of this rig at 1920**, and going further needs a bigger rim or more pixels,
+not a better algorithm.
+
+**Comparison the ladder was built to make:** marker board ±1.7–5.3 mm,
+rim annulus 3.7–30.4 mm IQR. The board remains roughly 3× better, as
+simulation predicted (~1 mm vs 2–6 mm). The rims are good enough to use and
+not good enough to replace the board as the ruler.
+
+**Not done:** the bare-face-mesh column of update.md's table. Backlit and dim
+lighting conditions (§4.2) — everything here is one room, lamp-lit. Pose
+agreement (§4.3): yaw was noisy at ±12–16° earlier and has still never been
+compared against the board's yaw frame by frame.
