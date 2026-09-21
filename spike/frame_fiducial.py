@@ -828,7 +828,7 @@ def find_rims(gray, rig, fx, expected_distance_mm=600.0, tolerance=0.45,
 def find_rims_hough(bgr, rig, fx, fy=None, cx0=None, cy0=None,
                     expected_distance_mm=600.0, tolerance=0.25,
                     grad=None, size_err_max=0.30, ratio_tol=0.35,
-                    max_roll_deg=35.0, max_yaw_deg=45.0):
+                    max_roll_deg=35.0, max_yaw_deg=60.0):
     """Locate both rims: Hough centres, annulus check, gradient-profile fit.
 
     This is the path that works on real faces, and it replaces the contour
@@ -938,6 +938,15 @@ def find_rims_hough(bgr, rig, fx, fy=None, cx0=None, cy0=None,
             # actually requires. MEASURED 2026-09-20: it rejects the 79.2/95.0
             # px pair that produced a fictional 90 deg yaw, and size_err 0.166
             # waved through.
+            #
+            # 60 deg, not 45: MEASURED 2026-09-20, a squared-up subject at
+            # ~600 mm gave rim fits of 58.5 and 54.3 px, a 7.7% disagreement
+            # where the true difference was near zero. That is fit noise, and
+            # it implied a 44 mm depth difference against a 45 deg bound of
+            # 43.5 mm -- so the gate rejected a correct pair by 0.5 mm. The
+            # bound exists to exclude the IMPOSSIBLE (72 mm across a 61.5 mm
+            # rig), not to encode how far a head is expected to turn, and a
+            # head can turn past 45 deg with both rims still visible.
             zp = fx * rig.radius_mm / p.a
             zq = fx * rig.radius_mm / q.a
             if abs(zq - zp) > rig.separation_mm * math.sin(
