@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Rim yaw against board yaw, frame by frame (update.md 4.3).
+
+HOLD THE BOARD FLAT AGAINST YOUR FOREHEAD, bottom edge above the eyebrows.
+For distance it was enough to rest it near the face, but yaw is a ROTATION:
+the board is only ground truth for it if the board turns with the head. A
+hand-held card beside the face keeps its own angle while the head turns and
+would measure the hand, not the head.
+
+The interesting quantity is not the raw error but the GAIN -- the slope of rim
+yaw against board yaw. A gain of 1.0 means the estimator tracks rotation; a
+gain of 0.6 means it systematically under-reads every turn, which no amount of
+filtering fixes and which a mean error near zero would hide completely,
+because the under-read is symmetric about centre.
+
+    bin/yawcheck [seconds]
+"""
+import sys, os, math, time
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import numpy as np, cv2
+from spike import camera, config, intrinsics as I, rig_geometry
+from spike.marker_board import MarkerBoard
+from spike.frame_fiducial import (RigSpec, max_gradient, find_rims_hough,
+                                  pose_from_rims, plausible,
+                                  YAW_MIN_FOR_PITCH_SIGN_DEG)
+
+DUR = float(sys.argv[1]) if len(sys.argv) > 1 else 50.0
+W = 1920
+BINS = np.arange(-30, 35, 5.0)        # coverage bins, degrees
+
+cfg = config.load(); c = cfg["camera"]; fr = cfg.get("frame_rig", {})
+H = int(round(W * c["height"] / c["width"]))
+it = I.load(width=W, height=H)
+if not it.calibrated:
+    print("REFUSING: intrinsics are the assumed-FOV fallback."); sys.exit(2)
+rig = RigSpec(radius_mm=float(fr.get("radius_mm", 25.0)),
+              inner_radius_mm=float(fr.get("inner_radius_mm", 22.0)),
+              separation_mm=float(fr.get("separation_mm", 61.5)))
+board = MarkerBoard(rig_geometry.OBJ_POINTS, rig_geometry.MARKER_IDS,
+                    rig_geometry.DICT, it.K, it.dist_coeffs, min_markers=3)
+
+SW, SH = cfg["screen"]["width_px"], cfg["screen"]["height_px"]
+cv2.namedWindow("yaw", cv2.WINDOW_NORMAL)
+cv2.setWindowProperty("yaw", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+F = cv2.FONT_HERSHEY_SIMPLEX
+seen = np.zeros(len(BINS) - 1, bool)
+
+def draw(byaw, ryaw, left, n):
+    img = np.zeros((SH, SW, 3), np.uint8); img[:] = (24, 24, 24)
+    def mid(t, y, sc, col, th=5):
+        (tw, _), _ = cv2.getTextSize(t, F, sc, th)
+        cv2.putText(img, t, ((SW-tw)//2, y), F, sc, col, th, cv2.LINE_AA)
+    mid("TURN YOUR HEAD SLOWLY LEFT AND RIGHT", 120, 1.8, (200,200,200), 4)
+    mid("keep the board flat on your forehead", 185, 1.1, (140,140,140), 3)
+    if byaw is None:
+        mid("BOARD NOT VISIBLE", 420, 2.6, (60,60,255))
+    else:
+        mid("%+.0f deg" % byaw, 430, 6.0, (200,200,200), 12)
+    # Coverage: fill each 5-degree bin once visited, so the sweep is provably
+    # wide rather than a wobble around centre.
+    bw, x0, y0 = int(SW*0.8/len(seen)), int(SW*0.1), 560
+    for i, ok in enumerate(seen):
+        cv2.rectangle(img, (x0+i*bw+2, y0), (x0+(i+1)*bw-2, y0+70),
+                      (80,200,80) if ok else (60,60,60), -1)
+    mid("coverage  %d / %d" % (seen.sum(), len(seen)), y0+130, 1.2, (150,150,150), 3)
+    cv2.circle(img, (SW//2, 800), 24, (80,230,80) if ryaw is not None else (70,70,70), -1)
+    mid("GLASSES LOCKED" if ryaw is not None else "glasses not locked", 870,
+        1.1, (80,230,80) if ryaw is not None else (110,110,110), 3)
+    mid("%.0fs left    %d samples" % (left, n), SH-70, 1.3, (140,140,140), 3)
+    cv2.imshow("yaw", img)
+    return cv2.waitKey(1) & 0xFF
+
+cam = camera.Camera(c["device"], W, H, c["fps"], c["fourcc"],
+                    int(fr.get("rim_exposure", 312)), c["focus"],
+                    int(fr.get("rim_gain", 192))).open()
+for _ in range(12):
+    cam.read()
+
+rows, t0 = [], time.time()
+while time.time() - t0 < DUR:
+    f = cam.read()
+    if f is None:
+        continue
+    g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+    bp = board.detect(g)
+    byaw = bp["yaw_deg"] if bp else None
+    ryaw = None
+    if bp is not None:
+        r = find_rims_hough(f, rig, it.fx, it.fy, it.cx, it.cy,
+                            expected_distance_mm=bp["distance_mm"])
+        if r is not None:
+            po = pose_from_rims(r[0], r[1], rig, it.fx, it.fy, it.cx, it.cy,
+                                pitch_hint_deg=0.0)
+            if plausible(po, rig):
+                ryaw = po["yaw_deg"]
+                rows.append((byaw, ryaw, bp["distance_mm"], po["distance_mm"],
+                             bp["roll_deg"], po["roll_deg"]))
+                k = np.digitize(byaw, BINS) - 1
+                if 0 <= k < len(seen):
+                    seen[k] = True
+    if draw(byaw, ryaw, DUR-(time.time()-t0), len(rows)) == ord('q'):
+        break
+cam.close(); cv2.destroyAllWindows()
+
+if len(rows) < 20:
+    print("only %d paired samples -- not enough to say anything" % len(rows))
+    sys.exit(0)
+A = np.array(rows)
+by, ry = A[:,0], A[:,1]
+print("paired samples %d   board yaw range %+.1f to %+.1f deg  (%d/%d bins)"
+      % (len(A), by.min(), by.max(), seen.sum(), len(seen)))
+
+# Fit rim = gain*board + offset. Gain is the number that matters: a systematic
+# under-read is symmetric about centre, so it barely moves the mean error.
+gain, off = np.polyfit(by, ry, 1)
+resid = ry - (gain*by + off)
+print()
+print("GAIN   %.3f   (1.000 = tracks rotation correctly)" % gain)
+print("offset %+.2f deg" % off)
+print("residual after gain+offset: rms %.2f  p95 |e| %.2f deg"
+      % (np.sqrt((resid**2).mean()), np.percentile(np.abs(resid), 95)))
+raw = ry - by
+print("raw error (no correction): p50 %+.2f  rms %.2f  p95 |e| %.2f deg"
+      % (np.median(raw), np.sqrt((raw**2).mean()), np.percentile(np.abs(raw), 95)))
+print("correlation %.3f" % np.corrcoef(by, ry)[0,1])
+
+print()
+print("%-14s %5s %9s %9s %8s" % ("board yaw", "n", "rim p50", "err p50", "err rms"))
+for i in range(len(BINS)-1):
+    m = (by >= BINS[i]) & (by < BINS[i+1])
+    if m.sum() < 3:
+        continue
+    e = ry[m] - by[m]
+    print("%+5.0f to %+5.0f %5d %9.1f %9.1f %8.1f"
+          % (BINS[i], BINS[i+1], m.sum(), np.median(ry[m]), np.median(e),
+             np.sqrt((e**2).mean())))
+
+near = np.abs(by) < YAW_MIN_FOR_PITCH_SIGN_DEG
+if near.sum() >= 3:
+    print()
+    print("within +/-%.0f deg (the pitch-ambiguous zone): n=%d  yaw err rms %.2f deg"
+          % (YAW_MIN_FOR_PITCH_SIGN_DEG, near.sum(),
+             np.sqrt(((ry[near]-by[near])**2).mean())))
+    print("  (yaw itself is fine here -- it is the PITCH SIGN that is degenerate)")
+
+np.savez("board_artifacts/yaw_%s.npz" % time.strftime("%Y-%m-%d_%H%M"), rows=A)
+print("\nsaved to board_artifacts/")

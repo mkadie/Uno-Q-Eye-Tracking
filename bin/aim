@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Live view on the UNO Q monitor: aim the camera and tune booth lighting.
+
+Everything this shows was learned the slow way this session, by pulling a
+frame over the network and looking at it. Put it on the monitor instead.
+
+  - live image, so the camera can be aimed without a second person
+  - FACE BRIGHTNESS, because a frame mean of 20 is what "the rim is not
+    visible" actually looks like, and gain fixes it where a longer exposure
+    does not (125 ms smears the rim and detection gets WORSE while the picture
+    gets brighter)
+  - BOARD and GLASSES lock lamps, so lighting changes can be judged by whether
+    detection survives rather than by whether the picture looks nice
+  - distance, since 550 mm measured best and 700 mm is near the working limit
+
+    bin/aim [seconds]
+"""
+import sys, os, math, time
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import numpy as np, cv2
+from spike import camera, config, intrinsics as I, rig_geometry
+from spike.marker_board import MarkerBoard
+from spike.frame_fiducial import (RigSpec, max_gradient, find_rims_hough,
+                                  pose_from_rims, plausible)
+
+DUR = float(sys.argv[1]) if len(sys.argv) > 1 else 300.0
+W = 1920
+cfg = config.load(); c = cfg["camera"]; fr = cfg.get("frame_rig", {})
+H = int(round(W * c["height"] / c["width"]))
+it = I.load(width=W, height=H)
+rig = RigSpec(radius_mm=float(fr.get("radius_mm", 25.0)),
+              inner_radius_mm=float(fr.get("inner_radius_mm", 22.0)),
+              separation_mm=float(fr.get("separation_mm", 61.5)))
+board = MarkerBoard(rig_geometry.OBJ_POINTS, rig_geometry.MARKER_IDS,
+                    rig_geometry.DICT, it.K, it.dist_coeffs, min_markers=3)
+SW, SH = cfg["screen"]["width_px"], cfg["screen"]["height_px"]
+cv2.namedWindow("aim", cv2.WINDOW_NORMAL)
+cv2.setWindowProperty("aim", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+F = cv2.FONT_HERSHEY_SIMPLEX
+
+cam = camera.Camera(c["device"], W, H, c["fps"], c["fourcc"],
+                    int(fr.get("rim_exposure", 312)), c["focus"],
+                    int(fr.get("rim_gain", 192))).open()
+for _ in range(10):
+    cam.read()
+
+t0, nb, nr, nf = time.time(), 0, 0, 0
+hist_b, hist_r = [], []
+while time.time() - t0 < DUR:
+    f = cam.read()
+    if f is None:
+        continue
+    nf += 1
+    g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+    bp = board.detect(g)
+    rim = None
+    if nf % 2 == 0:                      # every other frame keeps it responsive
+        r = find_rims_hough(f, rig, it.fx, it.fy, it.cx, it.cy,
+                            expected_distance_mm=(bp["distance_mm"] if bp else 550.0))
+        if r is not None:
+            po = pose_from_rims(r[0], r[1], rig, it.fx, it.fy, it.cx, it.cy,
+                                pitch_hint_deg=0.0)
+            if plausible(po, rig):
+                rim = (po, r)
+    if bp: nb += 1
+    if rim: nr += 1
+    hist_b.append(1 if bp else 0); hist_r.append(1 if rim else 0)
+    hist_b, hist_r = hist_b[-60:], hist_r[-60:]
+
+    # Face brightness: use the rims when we have them, else the middle third.
+    if rim:
+        (po, rr) = rim
+        x0 = int(min(rr[0].cx, rr[1].cx) - 80); x1 = int(max(rr[0].cx, rr[1].cx) + 80)
+        y0 = int(min(rr[0].cy, rr[1].cy) - 80); y1 = int(max(rr[0].cy, rr[1].cy) + 80)
+        roi = g[max(0,y0):max(1,y1), max(0,x0):max(1,x1)]
+    else:
+        roi = g[H//4:3*H//4, W//3:2*W//3]
+    bright = float(roi.mean()) if roi.size else 0.0
+
+    disp = cv2.resize(f, (SW, int(SW*H/W)))
+    img = np.zeros((SH, SW, 3), np.uint8); img[:] = (16,16,16)
+    yoff = 40
+    img[yoff:yoff+disp.shape[0], 0:SW] = disp[:min(disp.shape[0], SH-yoff)]
+    if rim:
+        sc = SW/float(W)
+        for e in rim[1]:
+            cv2.ellipse(img, (int(e.cx*sc), int(e.cy*sc)+yoff),
+                        (int(e.a*sc), int(e.b*sc)), math.degrees(e.theta),
+                        0, 360, (0,255,255), 3)
+
+    def lamp(x, on, label, sub=""):
+        cv2.circle(img, (x, SH-150), 30, (80,230,80) if on else (50,50,60), -1)
+        (tw,_),_ = cv2.getTextSize(label, F, 1.0, 3)
+        cv2.putText(img, label, (x-tw//2, SH-90), F, 1.0,
+                    (220,220,220) if on else (110,110,110), 3, cv2.LINE_AA)
+        if sub:
+            (tw,_),_ = cv2.getTextSize(sub, F, 0.8, 2)
+            cv2.putText(img, sub, (x-tw//2, SH-45), F, 0.8, (150,150,150), 2, cv2.LINE_AA)
+    lamp(int(SW*0.20), bool(bp), "BOARD",
+         "%d%%" % int(100*sum(hist_b)/max(len(hist_b),1)))
+    lamp(int(SW*0.45), bool(rim), "GLASSES",
+         "%d%%" % int(100*sum(hist_r)/max(len(hist_r),1)))
+
+    col = (80,230,80) if bright >= 90 else ((60,170,255) if bright >= 55 else (60,60,220))
+    cv2.putText(img, "FACE %3.0f" % bright, (int(SW*0.62), SH-120), F, 1.6, col, 4, cv2.LINE_AA)
+    msg = "good" if bright >= 90 else ("usable" if bright >= 55 else "TOO DARK - add light")
+    cv2.putText(img, msg, (int(SW*0.62), SH-60), F, 0.9, col, 2, cv2.LINE_AA)
+
+    if bp:
+        d = bp["distance_mm"]
+        dc = (80,230,80) if 500 <= d <= 650 else (60,170,255)
+        cv2.putText(img, "%4.0f mm" % d, (int(SW*0.84), SH-120), F, 1.6, dc, 4, cv2.LINE_AA)
+        cv2.putText(img, "aim 550", (int(SW*0.84), SH-60), F, 0.9, (150,150,150), 2, cv2.LINE_AA)
+    cv2.putText(img, "q to quit", (20, 30), F, 0.8, (120,120,120), 2, cv2.LINE_AA)
+    cv2.imshow("aim", img)
+    if (cv2.waitKey(1) & 0xFF) == ord('q'):
+        break
+cam.close(); cv2.destroyAllWindows()
+print("frames %d | board %d (%.0f%%) | glasses %d (%.0f%% of attempts)"
+      % (nf, nb, 100.0*nb/max(nf,1), nr, 100.0*nr/max(nf//2,1)))

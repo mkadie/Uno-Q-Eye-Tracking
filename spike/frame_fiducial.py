@@ -248,6 +248,15 @@ def pose_from_rims(left, right, rig, fx, fy, cx, cy, pitch_hint_deg=None):
     # exactly only for a circle centred on the optical axis. The depth path
     # has no such bias and is what the < 0.5 deg test pins.
     sin_yaw = -(z_right - z_left) / rig.separation_mm
+    # |sin_yaw| > 1 is not a large yaw, it is an IMPOSSIBLE one: the two rims
+    # would be further apart in depth than the rig is wide. It means a bad
+    # radius on at least one rim, and the clamp below turns that into a
+    # confident +/-90 deg rather than an error. MEASURED 2026-09-20: a real
+    # pair fitted 79.2 and 95.0 px -- a 72 mm depth difference across a
+    # 61.5 mm separation -- and came out as a clean-looking 90 deg yaw that
+    # only the span residual caught. Flag it so callers can tell the
+    # difference between "turned a long way" and "arithmetic gave up".
+    yaw_impossible = abs(sin_yaw) > 1.0
     yaw = math.asin(max(-1.0, min(1.0, sin_yaw)))
 
     # Roll is the image-plane angle of the rig's own x-axis, which is simply
@@ -306,6 +315,7 @@ def pose_from_rims(left, right, rig, fx, fy, cx, cy, pitch_hint_deg=None):
     pitch = sign * pitch_mag
 
     return {
+        "yaw_impossible": yaw_impossible,
         "t_mm": centre,
         "distance_mm": distance_mm,
         "z_left_mm": float(z_left),
@@ -818,7 +828,7 @@ def find_rims(gray, rig, fx, expected_distance_mm=600.0, tolerance=0.45,
 def find_rims_hough(bgr, rig, fx, fy=None, cx0=None, cy0=None,
                     expected_distance_mm=600.0, tolerance=0.25,
                     grad=None, size_err_max=0.30, ratio_tol=0.35,
-                    max_roll_deg=35.0):
+                    max_roll_deg=35.0, max_yaw_deg=45.0):
     """Locate both rims: Hough centres, annulus check, gradient-profile fit.
 
     This is the path that works on real faces, and it replaces the contour
@@ -918,6 +928,20 @@ def find_rims_hough(bgr, rig, fx, fy=None, cx0=None, cy0=None,
                 continue
             if abs(math.degrees(math.atan2(abs(q.cy - p.cy),
                                            max(abs(q.cx - p.cx), 1e-6)))) > max_roll_deg:
+                continue
+            # Depth difference is bounded by the geometry: the rims sit
+            # separation_mm apart on one rigid plane, so |z_r - z_l| can never
+            # exceed separation_mm * sin(yaw), and a head does not yaw past
+            # max_yaw_deg while still showing both rims. This replaces
+            # size_err as the real gate -- size_err is a fixed fraction, while
+            # this scales correctly with distance, which is what the geometry
+            # actually requires. MEASURED 2026-09-20: it rejects the 79.2/95.0
+            # px pair that produced a fictional 90 deg yaw, and size_err 0.166
+            # waved through.
+            zp = fx * rig.radius_mm / p.a
+            zq = fx * rig.radius_mm / q.a
+            if abs(zq - zp) > rig.separation_mm * math.sin(
+                    math.radians(max_yaw_deg)):
                 continue
             lo_e, hi_e = (p, q) if p.cx <= q.cx else (q, p)
             pose = pose_from_rims(lo_e, hi_e, rig, fx, fy, cx0, cy0,

@@ -722,3 +722,35 @@ def test_ring_helpers_return_none_rather_than_guessing():
     assert ff.ring_ellipse(blank, 50.0, 50.0, 20.0) is None
     # Off the edge of the image must not raise.
     assert ff.ring_radii(blank, -500.0, -500.0, 20.0, rig) is None
+
+
+def test_impossible_yaw_is_flagged_rather_than_clamped_silently():
+    """|sin_yaw| > 1 is not a big turn, it is a bad radius.
+
+    MEASURED 2026-09-20 on hardware: a real rim pair fitted 79.2 and 95.0 px,
+    a 72 mm depth difference across a 61.5 mm separation. asin() of that is
+    undefined; the clamp turned it into a confident 90 deg yaw that looked
+    entirely plausible and only the span residual caught.
+    """
+    rig = RigSpec(radius_mm=25.0, inner_radius_mm=22.0, separation_mm=61.5)
+    fx = 1366.05
+    left = Ellipse(cx=349.0, cy=712.0, a=79.2, b=75.0, theta=0.0)
+    right = Ellipse(cx=553.0, cy=664.0, a=95.0, b=90.0, theta=0.0)
+
+    pose = pose_from_rims(left, right, rig, fx, fx, 960.0, 540.0,
+                          pitch_hint_deg=0.0)
+    assert pose["yaw_impossible"] is True
+    assert abs(pose["yaw_deg"]) == pytest.approx(90.0, abs=1e-6)
+    # The span residual is what saved it before; keep that true.
+    assert pose["span_residual_mm"] > 8.0
+    assert not plausible(pose, rig)
+
+    # A geometrically sane pair must NOT be flagged.
+    a = fx * rig.radius_mm / 550.0
+    ok_l = Ellipse(cx=800.0, cy=500.0, a=a, b=a * 0.95, theta=0.0)
+    ok_r = Ellipse(cx=800.0 + fx * rig.separation_mm / 550.0, cy=500.0,
+                   a=a, b=a * 0.95, theta=0.0)
+    ok = pose_from_rims(ok_l, ok_r, rig, fx, fx, 960.0, 540.0,
+                        pitch_hint_deg=0.0)
+    assert ok["yaw_impossible"] is False
+    assert abs(ok["distance_mm"] - 550.0) < 550.0 * 0.02
