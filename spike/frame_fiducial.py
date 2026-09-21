@@ -815,6 +815,121 @@ def find_rims(gray, rig, fx, expected_distance_mm=600.0, tolerance=0.45,
     return (p, q) if p.cx <= q.cx else (q, p)
 
 
+def find_rims_hough(bgr, rig, fx, fy=None, cx0=None, cy0=None,
+                    expected_distance_mm=600.0, tolerance=0.25,
+                    grad=None, size_err_max=0.30, ratio_tol=0.35,
+                    max_roll_deg=35.0):
+    """Locate both rims: Hough centres, annulus check, gradient-profile fit.
+
+    This is the path that works on real faces, and it replaces the contour
+    front end rather than tuning it. MEASURED 2026-09-19 against the marker
+    board in the same frames: annulus on 100% of frames, pose on 85-92%,
+    paired distance error p50 -0.4 mm, 6.9 mm std under a 5-frame median,
+    against a board steady to 1.4 mm.
+
+    find_rims() is kept for synthetic geometry and clean images. It cannot do
+    this job: on a face the rim outline is present at the right size and place
+    but arrives broken into arcs AND fused with the brow and hair edges that
+    touch it, so no connected component is ever a ring, and the best-scoring
+    contour in the whole frame was the EYE.
+
+    The annulus is REQUIRED here, not optional. It is what identifies the
+    outer edge instead of guessing -- measured p50 ratio of 1.000 against the
+    board's expectation, where an inner-edge lock reads 1.136 and is a silent
+    13.6% scale error.
+
+    Returns (left, right) ordered by image x, or None.
+    """
+    import cv2
+
+    if fy is None:
+        fy = fx
+    if cx0 is None:
+        cx0 = bgr.shape[1] / 2.0
+    if cy0 is None:
+        cy0 = bgr.shape[0] / 2.0
+    mg = max_gradient(bgr) if grad is None else grad
+    ea = fx * rig.radius_mm / float(expected_distance_mm)
+    if ea < 6.0:
+        return None
+    # Tie the Hough radius window to `tolerance` rather than hardcoding it.
+    # MEASURED 2026-09-20: with the window at 0.70-1.35 while the candidate
+    # gate was +/-0.40, Hough could propose circles the gate would have
+    # refused, and the ladder at 450 mm came out bimodal -- most frames near
+    # -7 mm with a tail at -105 mm, IQR 77 mm. The tail was a ~30% oversized
+    # lock that a wide window admitted. One window, one number.
+    lo_r = max(4, int(ea * (1.0 - tolerance)))
+    hi_r = max(lo_r + 2, int(ea * (1.0 + tolerance)))
+    circles = cv2.HoughCircles(
+        mg, cv2.HOUGH_GRADIENT, dp=1.5, minDist=max(8.0, ea * 0.8),
+        param1=110, param2=55, minRadius=lo_r, maxRadius=hi_r)
+    if circles is None:
+        return None
+
+    lo, hi = ea * (1.0 - tolerance), ea * (1.0 + tolerance)
+    cands = []
+    for cx, cy, r in circles[0][:12]:
+        rr = ring_radii(mg, float(cx), float(cy), float(r), rig)
+        if rr is None:
+            continue
+        e = ring_ellipse(mg, float(cx), float(cy), rr[0])
+        if e is None or e.axis_ratio < 0.55:
+            continue
+        if not (lo <= e.a <= hi):
+            continue
+        cands.append(e)
+    if len(cands) < 2:
+        return None
+
+    # Pair on the scale-invariant separation/radius ratio: it holds at every
+    # distance, so unlike the size window it cannot be fooled by a subject who
+    # is simply nearer or further than expected.
+    #
+    # MEASURED 2026-09-20, and the reason the SCORE is not this ratio: at
+    # 450 mm a spurious background pair beat the real rims on ratio+size error
+    # by 0.122 to 0.126, and the ladder read 353 mm against a board at 457.
+    # Ratio and size error are both cheap for clutter to satisfy -- any two
+    # round-ish blobs at roughly the right spacing pass -- so ranking by them
+    # is ranking by how easy the test is to fake.
+    #
+    # Rank by SPAN RESIDUAL instead. It compares the depth implied by the
+    # separation against the depth implied by the radii, so it is a
+    # measurement the candidate pair did not get to choose, and two unrelated
+    # circles have no reason to agree on it. The real pair scored 1.5% on
+    # ratio; the impostor scored 6% but won on size. On span residual they are
+    # not close.
+    #
+    # Also require ROLL sanity. The rims sit side by side on one face, so the
+    # line joining their centres is near-horizontal unless the head is rolled.
+    # The impostor pair was diagonal -- 102 px of vertical offset against the
+    # real pair's 3 px -- and nothing in the ratio test noticed.
+    want = rig.separation_mm / rig.radius_mm
+    best, pair = None, None
+    for i in range(len(cands)):
+        for j in range(i + 1, len(cands)):
+            p, q = cands[i], cands[j]
+            d = math.hypot(q.cx - p.cx, q.cy - p.cy)
+            mean_a = 0.5 * (p.a + q.a)
+            if mean_a <= 0:
+                continue
+            obs = d / mean_a
+            size_err = abs(p.a - q.a) / max(p.a, q.a)
+            if abs(obs - want) / want > ratio_tol or size_err > size_err_max:
+                continue
+            if abs(math.degrees(math.atan2(abs(q.cy - p.cy),
+                                           max(abs(q.cx - p.cx), 1e-6)))) > max_roll_deg:
+                continue
+            lo_e, hi_e = (p, q) if p.cx <= q.cx else (q, p)
+            pose = pose_from_rims(lo_e, hi_e, rig, fx, fy, cx0, cy0,
+                                  pitch_hint_deg=0.0)
+            if not plausible(pose, rig):
+                continue
+            score = pose["span_residual_mm"]
+            if best is None or score < best:
+                best, pair = score, (lo_e, hi_e)
+    return pair
+
+
 def eye_roi(pose, left, right, pad=1.25):
     """Crop covering both rims, as (x, y, w, h) in pixels.
 

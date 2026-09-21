@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""Distance ladder with live on-screen guidance (update.md 4.1).
+
+The subject cannot read the terminal, so the readout goes on the UNO Q's
+monitor: current distance, target, and which way to move. The BOARD is the
+ruler -- it is steady to ~1.4 mm -- so position is judged by the board and the
+rim estimator is scored against it.
+
+Capture starts by itself once the board has been within tolerance for
+HOLD frames, so nobody has to press anything at arm's length.
+
+    bin/ladder                 # 450 500 550 600 650 700
+    bin/ladder 450 550         # just these
+"""
+import sys, os, math, time
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import numpy as np, cv2
+from spike import camera, config, intrinsics as I, rig_geometry
+from spike.marker_board import MarkerBoard
+from spike.frame_fiducial import (RigSpec, max_gradient, find_rims_hough,
+                                  pose_from_rims, plausible)
+
+TARGETS = [float(a) for a in sys.argv[1:]] or [450., 500., 550., 600., 650., 700.]
+TOL_MM, HOLD, N_CAP = 12.0, 12, 100
+W = 1920
+
+cfg = config.load(); c = cfg["camera"]; fr = cfg.get("frame_rig", {})
+H = int(round(W * c["height"] / c["width"]))
+it = I.load(width=W, height=H)
+if not it.calibrated:
+    print("REFUSING: intrinsics are the assumed-FOV fallback."); sys.exit(2)
+rig = RigSpec(radius_mm=float(fr.get("radius_mm", 25.0)),
+              inner_radius_mm=float(fr.get("inner_radius_mm", 22.0)),
+              separation_mm=float(fr.get("separation_mm", 61.5)))
+board = MarkerBoard(rig_geometry.OBJ_POINTS, rig_geometry.MARKER_IDS,
+                    rig_geometry.DICT, it.K, it.dist_coeffs, min_markers=3)
+
+SW, SH = cfg["screen"]["width_px"], cfg["screen"]["height_px"]
+WIN = "ladder"
+cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+F = cv2.FONT_HERSHEY_SIMPLEX
+
+def screen(target, dist, state, held, captured, rim_ok=None, yaw=None):
+    img = np.zeros((SH, SW, 3), np.uint8)
+    img[:] = (24, 24, 24)
+    def mid(txt, y, scale, col, th=6):
+        (tw, _), _ = cv2.getTextSize(txt, F, scale, th)
+        cv2.putText(img, txt, ((SW - tw) // 2, y), F, scale, col, th, cv2.LINE_AA)
+    mid("TARGET  %.0f mm" % target, 150, 2.2, (170, 170, 170), 4)
+    if dist is None:
+        mid("BOARD NOT VISIBLE", 430, 3.0, (60, 60, 255))
+        mid("hold it beside your face, facing the camera", 540, 1.2, (150,150,150), 3)
+    else:
+        err = dist - target
+        ok = abs(err) <= TOL_MM
+        col = (80, 230, 80) if ok else (60, 170, 255)
+        mid("%.0f mm" % dist, 470, 7.0, col, 14)
+        if state == "capture":
+            mid("HOLD STILL -- CAPTURING", 640, 2.0, (80, 230, 80), 5)
+            bw = int(SW * 0.6)
+            x0 = (SW - bw) // 2
+            cv2.rectangle(img, (x0, 700), (x0 + bw, 760), (90, 90, 90), 3)
+            cv2.rectangle(img, (x0, 700),
+                          (x0 + int(bw * captured / N_CAP), 760), (80, 230, 80), -1)
+        elif ok:
+            mid("HOLD IT", 640, 2.4, (80, 230, 80), 6)
+            _ = None
+            cv2.rectangle(img, (SW//2 - 200, 700), (SW//2 - 200 + int(400*held/HOLD), 750),
+                          (80, 230, 80), -1)
+        elif err < 0:
+            mid("MOVE BACK  %.0f mm" % (-err), 640, 2.4, (60, 170, 255), 6)
+        else:
+            mid("COME CLOSER  %.0f mm" % err, 640, 2.4, (60, 170, 255), 6)
+    if yaw is not None and abs(yaw) > 12.0:
+        mid("FACE THE CAMERA  (turned %.0f deg)" % abs(yaw), 830, 1.6,
+            (60, 170, 255), 4)
+    if rim_ok is not None:
+        cv2.circle(img, (SW // 2, 910), 26,
+                   (80, 230, 80) if rim_ok else (60, 60, 200), -1)
+        mid("GLASSES LOCKED" if rim_ok else "glasses not locked", 985, 1.1,
+            (80, 230, 80) if rim_ok else (120, 120, 120), 3)
+    mid("q to skip this distance", SH - 60, 1.0, (110, 110, 110), 2)
+    cv2.imshow(WIN, img)
+    return cv2.waitKey(1) & 0xFF
+
+cam = camera.Camera(c["device"], W, H, c["fps"], c["fourcc"],
+                    int(fr.get("rim_exposure", 312)), c["focus"],
+                    int(fr.get("rim_gain", 192))).open()
+for _ in range(12):
+    cam.read()
+
+results = []
+for target in TARGETS:
+    board.reset()
+    held, state, rows, t0 = 0, "seek", [], time.time()
+    while True:
+        f = cam.read()
+        if f is None:
+            continue
+        g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+        bp = board.detect(g)
+        d = bp["distance_mm"] if bp else None
+
+        rim_ok = None
+        if state == "seek":
+            close = d is not None and abs(d - target) <= TOL_MM
+            if close:
+                r = find_rims_hough(f, rig, it.fx, it.fy, it.cx, it.cy,
+                                    expected_distance_mm=d)
+                rim_ok = r is not None
+            # Both conditions, not just distance: a capture that starts while
+            # the rims are not locking produces a hole in the ladder.
+            held = held + 1 if (close and rim_ok) else 0
+            if held >= HOLD:
+                state, t0 = "capture", time.time()
+        else:
+            mg = max_gradient(f)
+            rim = None
+            r = find_rims_hough(f, rig, it.fx, it.fy, it.cx, it.cy,
+                                expected_distance_mm=(d or target), grad=mg)
+            if r is not None:
+                po = pose_from_rims(r[0], r[1], rig, it.fx, it.fy, it.cx, it.cy,
+                                    pitch_hint_deg=0.0)
+                if plausible(po, rig):
+                    rim = po
+            rows.append((d, rim["distance_mm"] if rim else None,
+                         rim["yaw_deg"] if rim else None,
+                         bp["yaw_deg"] if bp else None))
+            if len(rows) >= N_CAP:
+                break
+            if time.time() - t0 > 60:
+                break
+
+        k = screen(target, d, state, held, len(rows), rim_ok,
+                   bp['yaw_deg'] if bp else None)
+        if k == ord('q'):
+            break
+        if state == "seek" and time.time() - t0 > 180:
+            break
+
+    if not rows:
+        print("%.0f mm: skipped" % target); continue
+    bd = np.array([r[0] for r in rows if r[0] is not None])
+    rm = np.array([r[1] for r in rows if r[1] is not None])
+    pair = [(r[0], r[1]) for r in rows if r[0] is not None and r[1] is not None]
+    line = {"target": target, "n": len(rows), "board": bd, "rim": rm,
+            "pair": pair, "rows": rows}
+    results.append(line)
+    print("\n=== target %.0f mm  (%d frames) ===" % (target, len(rows)))
+    print("  board  %.1f +/- %.1f mm   (n=%d)" % (bd.mean(), bd.std(), len(bd)))
+    if len(rm):
+        print("  rim    p50 %.1f  IQR %.1f mm   detection %.0f%%"
+              % (np.median(rm), np.percentile(rm,75)-np.percentile(rm,25),
+                 100.0*len(rm)/len(rows)))
+    if len(pair) >= 5:
+        e = np.array([m - b for b, m in pair])
+        print("  error  p50 %+.1f  IQR %.1f  p5 %+.1f p95 %+.1f mm"
+              % (np.median(e), np.percentile(e,75)-np.percentile(e,25),
+                 np.percentile(e,5), np.percentile(e,95)))
+
+cam.close()
+cv2.destroyAllWindows()
+
+if results:
+    np.savez("board_artifacts/ladder_%s.npz" % time.strftime("%Y-%m-%d_%H%M"),
+             **{("t%.0f" % r["target"]): np.array(
+                 [[a if a is not None else np.nan,
+                   b if b is not None else np.nan,
+                   cc if cc is not None else np.nan,
+                   dd if dd is not None else np.nan] for a, b, cc, dd in r["rows"]])
+                for r in results})
+    print("\n%-8s %-22s %-24s %s" % ("target", "board", "rim p50 / IQR", "error p50 / IQR"))
+    for r in results:
+        bd, rm, pr = r["board"], r["rim"], r["pair"]
+        e = np.array([m - b for b, m in pr]) if len(pr) >= 5 else None
+        print("%-8.0f %-22s %-24s %s"
+              % (r["target"],
+                 "%.1f +/- %.1f" % (bd.mean(), bd.std()) if len(bd) else "-",
+                 "%.1f / %.1f" % (np.median(rm), np.percentile(rm,75)-np.percentile(rm,25)) if len(rm) else "-",
+                 "%+.1f / %.1f" % (np.median(e), np.percentile(e,75)-np.percentile(e,25)) if e is not None else "-"))
+    print("\nsaved to board_artifacts/")
