@@ -1104,3 +1104,56 @@ not good enough to replace the board as the ruler.
 lighting conditions (§4.2) — everything here is one room, lamp-lit. Pose
 agreement (§4.3): yaw was noisy at ±12–16° earlier and has still never been
 compared against the board's yaw frame by frame.
+
+## 2026-09-20 — YAW: the rims do NOT measure it. Negative result, with a reason.
+
+`bin/yawcheck`, board flat on the forehead so it rotates with the head, 41
+paired samples, board yaw −13° to +41°, at ~570 mm.
+
+| quantity | value |
+|---|---|
+| **gain** (slope of rim yaw vs board yaw) | **0.198** |
+| correlation | **0.138** |
+| raw error | rms 22.9°, p95 \|e\| 36.5° |
+| residual after fitting gain+offset | rms 19.1° |
+
+A gain of 0.198 with a correlation of 0.138 is not a miscalibration — it is
+**no signal**. The rim yaw estimate is essentially uncorrelated with real head
+rotation. Distance from these same frames is good to single millimetres; yaw
+from them is noise.
+
+**Why, quantitatively.** Yaw comes from the depth difference between the rims
+(trap c), `sin(yaw) = −(z_r − z_l)/S`, and depth comes from radius, so yaw is
+read as a *difference of two radii*. That difference is tiny:
+
+| Z | rim a | da/dz px/mm | Δa at 20° yaw | Δa at 10° |
+|---|---|---|---|---|
+| 400 | 85.4 | 0.213 | 4.49 px | 2.28 px |
+| 550 | 62.1 | 0.113 | 2.37 px | 1.21 px |
+| 700 | 48.8 | 0.070 | 1.47 px | 0.74 px |
+
+MEASURED fit noise on a squared-up subject at ~570 mm, where the true
+difference is ~0: the two rims fitted **58.5 and 54.3 px — 4.2 px apart**.
+
+So at 570 mm a 20° yaw separates the radii by 2.2 px while the noise is
+4.2 px. **Signal-to-noise 0.53 — the signal is below the noise.** For ±5° yaw
+the radius pair would have to be good to 0.56 px, about **7× better** than we
+achieve. This is not a tuning problem and no filter recovers it.
+
+**This does not contradict trap (c), it adds to it.** The docs reject
+eccentricity-derived yaw because it carries a couple of degrees of systematic
+perspective bias. True — but the depth-difference path it recommends is
+*noise*-limited at this rig's scale, and 2° of bias is far better than 19° of
+noise. Worth testing: yaw from the mean axis ratio of the two rims, which are
+coplanar and so should agree, averaging down the per-rim noise. Not yet
+measured; the axis ratios were not recorded in this run.
+
+**Consequences for the design.** The rims give **distance**, not orientation.
+Anything wanting head *rotation* needs the marker board, the face mesh, or an
+accepted 2° bias from eccentricity. The gaze mapping's `t_z` feature is fed by
+distance and is unaffected.
+
+**Caveats:** 41 samples, 7 of 12 coverage bins, one subject, one distance, one
+room. The board range was asymmetric (−13° to +41°), so the fit is not
+well balanced about centre. This is enough to rule the method out at this
+scale, not enough to characterise it.
