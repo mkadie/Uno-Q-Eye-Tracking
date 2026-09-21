@@ -1315,3 +1315,35 @@ the 128.7 measured earlier the same evening). The **worst single point was
 close to the 3.5° Path B/C boundary. **Repeat it** before committing seven
 weeks of schedule to it — and repeat it in good light, since a dim iris is a
 noisy iris and this run was dim.
+
+## 2026-09-21 — the 66-parameter model was never earning its parameters
+
+Scored on the same 26 held-out targets as the Gate 1c runs above, refitting
+the stored feature vectors — no new sitting.
+
+| calibration points | LinearMapper (7 par) | GazeMapper poly2 (66 par) |
+|---|---|---|
+| 9 | **3.49°** | 8.37° |
+| 25 | **3.01°** | 3.27° |
+
+**Linear wins at every point count tried, including 25 where poly2 was
+supposed to have enough data.** `LinearMapper` uses six features — both iris
+x/y, yaw, pitch — and a bias, against poly2's degree-2 expansion of all ten.
+Dropping `roll`, `t_x`, `t_y`, `t_z` and every quadratic term costs nothing
+measurable and buys a model that cannot overfit a short grid.
+
+This reframes the Gate 1c result above. The headline 3.27° came from 25 points
+plus the blocked-CV fix; **3.49° was available all along from 9 points and a
+linear fit**, at a third of the sitting time. The blocked-CV work was still
+necessary — it is what makes poly2 safe at 25 points — but the larger lesson
+is that poly2 should probably not be the default at all.
+
+**Not yet done:** poly2 is still the spike's default above 16 points, and
+`config.toml` still points at it. Changing that is a one-line decision but it
+deserves its own fresh run rather than a refit, since every number here comes
+from data collected for a different model. The bunny game has already been
+switched to linear for any grid it will present (see its `GAZE.md`).
+
+**Caveat:** one subject, one session, two grids. Linear's margin at 25 points
+(3.01 vs 3.27) is inside the run-to-run spread seen earlier tonight; its
+margin at 9 points (3.49 vs 8.37) is not.
