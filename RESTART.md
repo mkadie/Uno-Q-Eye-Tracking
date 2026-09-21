@@ -18,7 +18,7 @@ numbers; this is the orientation.
 | rim **yaw** | **DOES NOT WORK** — gain 0.198, correlation 0.138. Do not retry as-is. |
 | distance ladder 450–700 | **DONE**, all six rungs |
 | lighting conditions | **partial** — mild backlight fine; the daylight/window case is NOT done |
-| Gate 1c bare-faced | still the number that forks the schedule; see below |
+| Gate 1c bare-faced | **DONE — 3.27 deg / 5.56 p95 -> PATH B.** Repeat in good light. |
 
 Suite is **158 passing**, no hardware needed.
 
@@ -112,9 +112,12 @@ confound since the ladder shows distance alone moves pose by tens of points.
 
 ## Still open, roughly in priority order
 
-1. **Bare-faced `bin/calibrate`** (update.md §4.4) — the number that forks the
-   schedule and needs none of the fiducial work. A 2026-09-19 run exists but
-   is not written into `RESULTS.md`.
+1. ~~Bare-faced `bin/calibrate`~~ **DONE 2026-09-21: 3.27 deg / 5.56 p95.
+   This is PATH B, not Path C.** Repeat it in good light before committing
+   seven weeks of schedule — this run was at face brightness 55.4 against the
+   128.7 seen earlier the same evening, one subject, one run, and 3.27 sits
+   close to the 3.5 deg boundary. The worst single point was 15.73 deg, so
+   there is a tail the mean hides.
 2. **The window/backlit test** above. 10 minutes, needs daylight.
 3. **Yaw from mean axis ratio** — the one untried idea with a real argument
    behind it.

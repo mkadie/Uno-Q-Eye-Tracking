@@ -314,6 +314,37 @@ the contingency.
 
 **Not yet run:** `bin/bench`, `bin/calibrate` — Gates 1b and 1c.
 
+**GATE 1c BARE-FACED, 2026-09-21: 3.27 deg mean / 5.56 deg p95** (26 held-out
+points, 25 calibration points, ridge from blocked CV on training data only).
+**That is PLAN.md Path B, not Path C** — the project had been on Path C since
+run 7 and no hardware changed. In pixels, immune to the viewing-distance
+question: 477 px -> 164 px.
+
+Two fitting bugs got it there, neither visible in the training error:
+
+- **`points = 9` was never enough.** 66 parameters, 9 points, trains on 8.
+  9 points gave 8.4-8.5 deg where 25 gave 2.34 on the same session and the
+  same 26 validation targets. `config.toml` now says 25.
+- **`ridge = "auto"` used leave-one-out CV, which under-regularises here.**
+  Calibration samples are collected over ~112 s and are temporally
+  correlated, so LOO leaves a held-out point's own time-neighbours in the
+  training set and it is predicted partly from itself. Measured: LOO chose
+  0.215 -> 11.97 deg, blocked 5-fold chose 46.4 -> 2.53 deg, oracle 2.22.
+  `_cv_ridge` now uses **contiguous blocked folds**, and they must stay
+  contiguous in COLLECTION order -- strided folds reproduce the LOO failure
+  while looking like k-fold.
+
+**The overfitted runs reported training errors of 0.16 and 0.40 deg** -- the
+worse they overfitted, the better they looked. Never judge a calibration by
+its training error; `auto` picked 100, 10, 1 and 0.1 across four runs of the
+same subject at the same task.
+
+**`viewing_distance_mm` is 504, not the 584 it said for months.** Every
+angular error scales directly with it, so 584 inflated every degree figure by
+16%. Degrees from different sittings are not comparable without each
+sitting's distance -- **measure it every sitting, and prefer pixels when
+comparing across sittings.**
+
 **Verified on hardware 2026-09-20** against the marker board in the same
 frames: rim **distance** works — 100% detection and 3.7 mm error IQR at
 550 mm, 12.1 mm median IQR across a 450-700 mm ladder. The ~22 mm bias is the

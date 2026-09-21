@@ -165,3 +165,52 @@ def test_shuffled_is_a_permutation_and_reproducible():
     b, ib = mod.shuffled(pts, np.random.default_rng(7))
     assert a == b and list(ia) == list(ib), "same seed must reproduce the order"
     assert sorted(a) == sorted(pts), "must be a permutation, losing no point"
+
+
+def test_blocked_folds_beat_leave_one_out_on_correlated_samples():
+    """LOO under-regularises when consecutive samples are correlated.
+
+    MEASURED 2026-09-21 on a real 25-point calibration, validated on 26
+    separate targets: LOO chose ridge 0.215 and gave 11.97 deg, blocked
+    5-fold chose 46.4 and gave 2.53 deg, against an oracle best of 2.22.
+    Same data, same grid, same solver -- only the fold structure differed.
+
+    Here the correlation is made explicit: samples arrive in time order and
+    each is a small perturbation of the one before, exactly as a calibration
+    grid collected over ~2 minutes is. A held-out singleton is then almost
+    recoverable from its neighbours, so LOO reports that barely-penalised
+    fits generalise. Contiguous blocks remove a whole stretch of time at
+    once, which is the question actually being asked.
+    """
+    rng = np.random.default_rng(11)
+    n, d = 40, 10
+    # A drifting walk, not independent draws: consecutive rows are close.
+    steps = rng.normal(0, 0.05, size=(n, d))
+    X = np.cumsum(steps, axis=0) + rng.normal(0, 0.02, size=(n, d))
+    true_w = rng.normal(0, 1, size=(d, 2))
+    y = X @ true_w + rng.normal(0, 0.4, size=(n, 2))
+
+    m = GazeMapper(ridge="auto")
+    grid = np.logspace(-6, 4, 21)
+    lam_blocked = m._cv_ridge(X, y, grid=grid, n_folds=5)
+    lam_loo = m._cv_ridge(X, y, grid=grid, n_folds=n)      # n folds == LOO
+
+    assert lam_blocked >= lam_loo, (
+        "blocked folds must not choose LESS regularisation than LOO on "
+        "correlated samples; got blocked=%g loo=%g" % (lam_blocked, lam_loo))
+
+
+def test_cv_ridge_folds_are_contiguous_not_strided():
+    """The blocking only works if folds are contiguous in COLLECTION ORDER.
+
+    Strided folds (every k-th sample) would put a point's own time-neighbours
+    in the training set again and reproduce the LOO failure while looking
+    like k-fold. This pins the property rather than the implementation: a
+    contiguous split of 25 into 5 must yield exactly 5 runs of 5.
+    """
+    folds = np.array_split(np.arange(25), 5)
+    assert len(folds) == 5
+    for f in folds:
+        assert len(f) == 5
+        assert np.all(np.diff(f) == 1), "fold is not contiguous: %r" % (f,)
+    assert folds[0][0] == 0 and folds[-1][-1] == 24

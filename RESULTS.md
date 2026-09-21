@@ -1241,3 +1241,77 @@ noisy iris. Recorded here so the run is interpretable rather than discarded.
 **Repeat this run** with (a) the head held still between blocks — the two grids
 are minutes apart and nothing restrains the head, and (b) the lamp back to the
 128.7 arrangement. Until then Gate 1c bare-faced is **not measured**.
+
+## 2026-09-21 — GATE 1c BARE-FACED: 3.27°. This is Path B, not Path C.
+
+`bin/calibrate --val-points 26`, bare-faced, shuffled, 25 calibration points,
+ridge chosen by blocked 5-fold CV **from training data only**.
+
+| | value |
+|---|---|
+| **validation, 26 held-out points** | **3.27° mean, 5.56° p95** |
+| in pixels | 164 px mean, 279 px p95 |
+| worst single point | 15.73° |
+| drift between blocks | max 1.6 sd — clean |
+| implied minimum target | 98 mm → 3×1 grid |
+
+Against run 7's 8.22°, and in pixels — which is immune to the
+viewing-distance question — **477 px → 164 px, a 2.9× improvement.**
+
+**`PLAN.md` § the Sunday-night fork:** Path B is fps ≥ 15 and error 2.0–3.5°.
+fps p50 is 18–25. Error is 3.27°. **That is Path B: build the AAC grid, add
+zoom-to-refine for cursor work.** The project had been on Path C ("do not
+build on this, diagnose first") since run 7. It is not on Path C any more,
+and no hardware changed — the camera, the lens and the backend are the same.
+
+### Two bugs in the fitting, and neither was visible in the training error
+
+**1. `points = 9` was never enough.** The mapping has 66 parameters
+(degree-2 poly on 10 features), so a 9-point grid trains on 8 of them. Same
+subject, same session, same 26 validation targets:
+
+| calibration points | validation |
+|---|---|
+| 9 | 8.4–8.5° |
+| 25 | **2.34°** |
+
+Now `points = 25` in `config.toml`. It costs ~112 s to collect against ~37 s.
+
+**2. `ridge = "auto"` used leave-one-out CV, which under-regularises here.**
+Calibration points are collected over ~112 s, so consecutive samples are
+*temporally correlated* — same head pose, same blink state. LOO leaves a
+held-out point's own time-neighbours in the training set, so the point is
+predicted partly from itself: CV then reports that barely-penalised fits
+generalise, and picks a penalty orders of magnitude too small. Measured on one
+real 25-point run, validated on 26 separate targets:
+
+| fold structure | ridge chosen | validation |
+|---|---|---|
+| leave-one-out | 0.215 | 11.97° |
+| **blocked 5-fold** | 46.4 | **2.53°** |
+| oracle (best possible) | 21.5 | 2.22° |
+
+Same data, same grid, same solver — only the fold structure differs. Blocked
+folds land within 0.3° of the oracle. Blocking is the standard remedy for
+correlated samples and was chosen for that reason, not fitted to these runs.
+
+**Both failures were invisible from inside.** The overfitted runs reported
+training errors of **0.16°** and **0.40°** — the more badly they overfitted,
+the better they looked. `auto` picked 100, 10, 1 and 0.1 across four runs of
+the same subject at the same task.
+
+### Also corrected: `viewing_distance_mm` 584 → 504
+
+584 was a stale 23-inch reading from a different seating position. Every
+angular error scales directly with it, so **584 inflated every degree figure
+by 16%**. Degrees from different sittings cannot be compared without each
+one's distance — **measure it every sitting**. Pixels are the safe currency.
+
+### Caveats — do not over-read this
+
+One run, one subject, one lighting condition (face-box brightness 55.4, below
+the 128.7 measured earlier the same evening). The **worst single point was
+15.73°** against a p95 of 5.56°, so there is a tail the mean hides. 3.27° sits
+close to the 3.5° Path B/C boundary. **Repeat it** before committing seven
+weeks of schedule to it — and repeat it in good light, since a dim iris is a
+noisy iris and this run was dim.

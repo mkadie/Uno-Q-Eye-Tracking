@@ -124,7 +124,19 @@ beta       = 0.007
 d_cutoff   = 1.0
 
 [calibration]
-points            = 9
+points            = 25    # MEASURED 2026-09-21: 9 was never enough. The
+                          # mapping has 66 parameters (degree-2 poly on 10
+                          # features); a 9-point grid trains on 8 of them and
+                          # no penalty rescues that. Same subject, same
+                          # session, validated on 26 separate held-out
+                          # targets:
+                          #     9 points  -> 8.4-8.5 deg
+                          #    25 points  -> 2.34 deg
+                          # The 25-point grid costs ~112 s to collect against
+                          # ~37 s. That is the trade, and it is worth it:
+                          # 2.34 deg implies a ~41 mm target where 8.5 deg
+                          # implies ~150 mm, i.e. a usable grid instead of a
+                          # 1x1 one.
 samples_per_point = 30
 settle_ms         = 700
 # MEASURED 2026-08-16: "auto" picks the penalty by leave-one-out CV at fit
