@@ -312,8 +312,6 @@ the .so is loaded lazily — so never test availability by importing. Use
 SIGILL cannot be caught with `try/except`. LiteRT is the primary path now, not
 the contingency.
 
-**Not yet run:** `bin/bench`, `bin/calibrate` — Gates 1b and 1c.
-
 **GATE 1c BARE-FACED, 2026-09-21: 3.27 deg mean / 5.56 deg p95** (26 held-out
 points, 25 calibration points, ridge from blocked CV on training data only).
 **That is PLAN.md Path B, not Path C** — the project had been on Path C since
