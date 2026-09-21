@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np, cv2
 from spike import camera, config, intrinsics as I, rig_geometry
 from spike.marker_board import MarkerBoard
+from spike import nosleep
 from spike.frame_fiducial import (RigSpec, max_gradient, find_rims_hough,
                                   pose_from_rims, plausible)
 
@@ -36,6 +37,7 @@ board = MarkerBoard(rig_geometry.OBJ_POINTS, rig_geometry.MARKER_IDS,
 SW, SH = cfg["screen"]["width_px"], cfg["screen"]["height_px"]
 cv2.namedWindow("aim", cv2.WINDOW_NORMAL)
 cv2.setWindowProperty("aim", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+nosleep.hold()   # OpenCV drawing is not an input event; X will blank on us
 F = cv2.FONT_HERSHEY_SIMPLEX
 
 cam = camera.Camera(c["device"], W, H, c["fps"], c["fourcc"],

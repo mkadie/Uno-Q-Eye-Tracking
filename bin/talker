@@ -49,6 +49,7 @@ import cv2
 import numpy as np
 
 from spike import backends, calib, camera, config, features, menu as menulib
+from spike import nosleep
 from spike.oneeuro import OneEuroFilter2D
 from spike.targets import WIN, collect_point, grid_points, shuffled
 
@@ -271,8 +272,11 @@ def calibrate(cam, be, cfg, canvas, n_pts, rng):
     still for two minutes, the short grid is not a compromise, it is the only
     one that happens.
     """
-    pts = shuffled(grid_points(n_pts, cfg["screen"]["width_px"],
-                               cfg["screen"]["height_px"]), rng)
+    # shuffled() returns (points, order) -- the order is returned so it can be
+    # saved with the run. Unpacking it as one value hands the whole list to
+    # collect_point as a single target.
+    pts, order = shuffled(grid_points(n_pts, cfg["screen"]["width_px"],
+                                      cfg["screen"]["height_px"]), rng)
     X, y = [], []
     for i, pt in enumerate(pts):
         got = collect_point(cam, be, cfg, canvas, pt, "%d / %d" % (i + 1, len(pts)))
@@ -293,6 +297,10 @@ def main():
                     help="no camera; pointer only, for layout work")
     ap.add_argument("--dwell", type=float, default=0.0,
                     help="also select by looking for this many seconds")
+    ap.add_argument("--hold", type=int, default=3,
+                    help="samples a new cell must win before the hover moves")
+    ap.add_argument("--smooth", type=float, default=0.35,
+                    help="One Euro min_cutoff scale; lower = smoother, laggier")
     ap.add_argument("--sounds", default=None,
                     help="root holding button_sounds/ (default: next to the menu)")
     ap.add_argument("--quiet", action="store_true", help="print instead of speaking")
@@ -327,6 +335,8 @@ def main():
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
     if not args.windowed:
         cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    # OpenCV drawing is not an input event, so X will blank on us mid-demo.
+    nosleep.hold()
     canvas = np.zeros((H, W, 3), np.uint8)
 
     seed = args.seed if args.seed is not None else random.randrange(2 ** 31)
@@ -345,10 +355,18 @@ def main():
             mouse["click"] = True
     cv2.setMouseCallback(WIN, on_mouse)
 
-    filt = OneEuroFilter2D(cfg["filter"]["min_cutoff"], cfg["filter"]["beta"],
+    # MEASURED on the bunny game, and the same failure appears here: at ~16 Hz
+    # samples the raw estimate visibly steps. config.toml's min_cutoff is tuned
+    # for a cursor chasing a moving target, where lag costs more than jitter.
+    # An AAC board is the opposite -- the target does not move, the user is
+    # fixating, and lag is nearly free. So smooth harder by default.
+    filt = OneEuroFilter2D(cfg["filter"]["min_cutoff"] * args.smooth,
+                           cfg["filter"]["beta"],
                            cfg["filter"]["d_cutoff"])
     stack = []                       # (menu, menu_dir) breadcrumbs
-    hover = None
+    hover = None                     # the COMMITTED cell -- what is highlighted
+    cand = None                      # cell the raw gaze is in right now
+    cand_n = 0                       # consecutive samples it has won
     dwell_since = None
     use_mouse = args.mouse or mapper is None
     # Every selection is a MEASUREMENT: where the gaze was against the cell
@@ -390,18 +408,39 @@ def main():
         gx = min(max(float(gx), 0.0), W - 1.0)
         gy = min(max(float(gy), 0.0), H - 1.0)
         cell = cell_at(gx, gy, m, W, H)
-        press = m.at(*cell) if cell else None
 
-        if cell != hover:
+        # HYSTERESIS. On a 6-cell board, jitter inside a cell is cosmetic and
+        # jitter across a boundary is fatal: the highlight flickers between two
+        # cells and the user cannot tell which one a keypress will speak.
+        #
+        # So a new cell has to win `hold` consecutive samples before the hover
+        # moves. At ~16 Hz that is ~190 ms at the default of 3 -- long enough
+        # to swallow the noise, short enough that a deliberate look feels
+        # immediate. Crucially the committed cell STAYS put while the raw point
+        # wanders, which is what makes the board feel solid.
+        #
+        # This is not extra smoothing. Smoothing trades lag for jitter
+        # everywhere; hysteresis spends it only at the boundary, which is the
+        # only place it matters here.
+        if cell == cand:
+            cand_n += 1
+        else:
+            cand, cand_n = cell, 1
+        if cell != hover and cand_n >= max(1, args.hold):
             hover = cell
             dwell_since = now if (press is not None and args.dwell > 0) else None
         frac = 0.0
         if args.dwell > 0 and dwell_since is not None and press is not None:
             frac = (now - dwell_since) / args.dwell
 
+        # What is highlighted is what gets spoken. Anything else is a lie to the
+        # user, and on an AAC device saying the wrong word is the whole failure.
+        press = m.at(*hover) if hover else None
+
         src = "mouse" if use_mouse else "gaze"
         status = ("%s   SPACE/ENTER speak   b back   r recalibrate   m %s   q quit"
-                  % (src, "gaze" if use_mouse else "mouse"))
+                  "   [hold %d  smooth %.2f]"
+                  % (src, "gaze" if use_mouse else "mouse", args.hold, args.smooth))
         draw_board(canvas, m, hover, W, H, status, frac)
         cv2.circle(canvas, (int(gx), int(gy)), 16, (255, 255, 255), 2)
         cv2.circle(canvas, (int(gx), int(gy)), 3, ACCENT, -1)
@@ -433,7 +472,7 @@ def main():
             continue
 
         if fire and press is not None:
-            cx, cy = cell_centre(cell[0], cell[1], m, W, H)
+            cx, cy = cell_centre(hover[0], hover[1], m, W, H)
             log.append((press.label, gx - cx, gy - cy, src))
             dwell_since = now
             if press.is_submenu:

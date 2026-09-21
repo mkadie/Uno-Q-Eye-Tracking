@@ -160,6 +160,61 @@ game has already been switched to linear for any grid it will present. Making
 that change in the spike deserves its own fresh run rather than a refit, since
 every number above came from data collected for a different model.
 
+## T-Rex Talker demo — built, runs, NOT yet usable
+
+`bin/talker` is a 3x2 AAC board on the gaze pipeline: gaze aims, SPACE/ENTER
+speaks. It reads the device's real `.menu` files (`spike/menu.py`) and plays
+its real recorded clips. 3x2 rather than the CYD's 4x2 because at 504 mm a
+cell is 640x540 px = 12.8 x 10.8 deg, and 2x the measured error needs 327 px
+(mean) / 556 px (p95): 3x2 is comfortable, 4x2 is tight on both axes at p95.
+
+**Status 2026-09-21: it runs and gives "some control, but very jumpy".** Not
+yet demoed successfully. Hysteresis was added in response and **has never been
+tested** — that is the first thing to try next session.
+
+The hysteresis idea, for whoever picks this up: on a 6-cell board, jitter
+*inside* a cell is cosmetic and jitter *across a boundary* is fatal, because
+the highlight flickers between two cells and the user cannot tell which one a
+keypress will speak. So a new cell must win `--hold` consecutive samples
+(default 3, ~190 ms at 16 Hz) before the hover moves, and the committed cell
+is what a keypress acts on. That spends lag only at the boundary, where
+smoothing would spend it everywhere. `--smooth` (default 0.35) additionally
+scales `min_cutoff` down, because config.toml's value is tuned for a cursor
+chasing a moving target and an AAC board is the opposite case — the target
+does not move and lag is nearly free.
+
+**Open question, unmeasured:** whether the jumpiness is a filtering/UX problem
+that hysteresis fixes, or whether the landmark estimate itself is too noisy at
+this working distance. Nobody has measured the sample-to-sample noise of the
+gaze point while fixating, which is the measurement that would tell them
+apart. Do that before changing the tracker.
+
+## Two display gotchas that cost a session
+
+**Do not reboot with the monitor asleep.** The board's own DPMS puts it to
+sleep, and a reboot from that state comes up with **EDID 0 bytes** — the
+monitor never answers, so the driver offers only generic VESA modes
+(640x480, 1024x768, 800x600) and X comes up at 640x480. Recovering it needs a
+physical re-plug of the DisplayPort cable or a monitor power-cycle; there is
+no software fix from the board side.
+
+**Do not guess a modeline to work around it.** A forced 1920x1080 at a 173 MHz
+pixel clock made the monitor say OUT OF RANGE and left the user with no
+picture at all. If EDID is missing, drop to a mode the driver already offers
+(`xrandr --output DP-1 --mode 1024x768`) and fix the EDID physically.
+
+**`bin/talker` still hardcodes the screen size from config.toml.** It should
+read the actual display size so a board that comes up at 1024x768 draws a
+correct 3x2 rather than a broken one. Not done.
+
+**OpenCV drawing is not an input event**, so X blanks a gaze demo mid-run --
+gaze is not input as far as the idle timer is concerned. `spike/nosleep.py`
+disables blanking for the life of a tool and restores the previous settings at
+exit; it is wired into `talker`, `aim`, `ladder` and `yawcheck`.
+
+**`pkill -f "bin/talker"` kills its own shell** when run over ssh, because the
+pattern appears in that shell's command line. Use `bin/talk[e]r`.
+
 ## Still open, roughly in priority order
 
 1. **Repeat Gate 1c in good light.** 3 minutes, and it is what the whole
