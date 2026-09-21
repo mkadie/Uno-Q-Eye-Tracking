@@ -1157,3 +1157,44 @@ distance and is unaffected.
 room. The board range was asymmetric (−13° to +41°), so the fit is not
 well balanced about centre. This is enough to rule the method out at this
 scale, not enough to characterise it.
+
+## 2026-09-20 — lighting conditions (update.md §4.2), partial
+
+`bin/lighttest`, ~31–32 frames per condition, ~550–670 mm, same subject and
+glasses throughout.
+
+| condition | face | halo | halo/face | board | hough | annulus | pose | dist IQR |
+|---|---|---|---|---|---|---|---|---|
+| frontlit | 128.7 | – | – | 74% | 100% | 100% | 52% | 42.0 |
+| backlit (lamp behind, front lights on) | 152.2 | – | – | 100% | 100% | 100% | 72% | 30.0 |
+| backlit2 (lamp aimed at camera) | 122.7 | 112.6 | 0.92 | 0% | 100% | 100% | 48% | 154.9 |
+| **backlit3 (front lights OFF)** | 91.2 | 110.4 | **1.21** | 100% | 100% | 100% | **84%** | 44.6 |
+
+**Mild backlighting does not hurt — it helped.** At halo/face 1.21, which is
+the most backlit condition achieved, rim pose reached **84%**, the best of any
+condition measured, with the annulus at 100% throughout. The predicted failure
+mode — backlighting kills the inner edge first and collapses the annulus — did
+**not** appear at this level. The annulus never dropped below 100% in any
+condition.
+
+**Measure the halo, not the frame.** A whole-frame background average dilutes
+a bright source behind the head into a lot of dark room: placing a lamp behind
+the subject moved whole-frame bg/face from 0.82 to 0.83, i.e. reported no
+change while the scene was plainly different. The ring immediately around the
+head is what silhouettes a face, and it read 1.21 where the frame read 1.09.
+
+**Face brightness is not the useful control.** Across these runs face mean
+spanned 91–152 and pose ranged 48–84% with no ordering between them: the
+*worst* pose (48%) came with a well-lit face of 122.7, and the *best* (84%)
+with the darkest face at 91.2. Detection tracked seating distance and pair
+stability, not illumination. `bin/aim`'s brightness thresholds are therefore a
+guide to whether anything is visible at all, not a predictor of detection.
+
+**NOT YET the real test.** halo/face 1.21 is a lamp on a wall at 00:40. A
+window in daylight is far harsher — a faire hall with glazing behind the
+visitor could easily exceed 3. **Repeat this in the morning with a window
+behind the subject**; the sign of the effect is established, the magnitude at
+the worst case is not. Also uncontrolled here: distance varied 515–669 mm
+between conditions, and the ladder showed distance alone moves pose by tens of
+points, so these percentages carry that confound. The backlit2 row is not
+usable — the board was out of frame and distance IQR blew out to 154.9 mm.

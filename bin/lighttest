@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Detection rate vs lighting condition (update.md 4.2).
+
+Records a NAMED condition so conditions can be compared rather than judged by
+eye. The number that matters for backlighting is not how dark the face is but
+the RATIO of background to face: a bright wall behind the head drives the
+camera's own exposure down and pushes the face toward silhouette, and a
+silhouetted rim loses its INNER edge first -- which is the edge the annulus
+needs and the one that identifies the outer edge as outer.
+
+    bin/lighttest frontlit 40
+    bin/lighttest backlit  40
+"""
+import sys, os, math, time, json
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import numpy as np, cv2
+from spike import camera, config, intrinsics as I, rig_geometry
+from spike.marker_board import MarkerBoard
+from spike.frame_fiducial import (RigSpec, max_gradient, ring_radii,
+                                  ring_ellipse, find_rims_hough,
+                                  pose_from_rims, plausible)
+
+LABEL = sys.argv[1] if len(sys.argv) > 1 else "unnamed"
+DUR = float(sys.argv[2]) if len(sys.argv) > 2 else 40.0
+W = 1920
+cfg = config.load(); c = cfg["camera"]; fr = cfg.get("frame_rig", {})
+H = int(round(W * c["height"] / c["width"]))
+it = I.load(width=W, height=H)
+rig = RigSpec(radius_mm=float(fr.get("radius_mm", 25.0)),
+              inner_radius_mm=float(fr.get("inner_radius_mm", 22.0)),
+              separation_mm=float(fr.get("separation_mm", 61.5)))
+board = MarkerBoard(rig_geometry.OBJ_POINTS, rig_geometry.MARKER_IDS,
+                    rig_geometry.DICT, it.K, it.dist_coeffs, min_markers=3)
+SW, SH = cfg["screen"]["width_px"], cfg["screen"]["height_px"]
+cv2.namedWindow("lt", cv2.WINDOW_NORMAL)
+cv2.setWindowProperty("lt", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+F = cv2.FONT_HERSHEY_SIMPLEX
+
+cam = camera.Camera(c["device"], W, H, c["fps"], c["fourcc"],
+                    int(fr.get("rim_exposure", 312)), c["focus"],
+                    int(fr.get("rim_gain", 192))).open()
+for _ in range(12):
+    cam.read()
+
+n = n_board = n_hough = n_ann = n_pair = 0
+face_v, bg_v, halo_v, dist_v, resid_v = [], [], [], [], []
+t0 = time.time()
+while time.time() - t0 < DUR:
+    f = cam.read()
+    if f is None:
+        continue
+    n += 1
+    g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+    bp = board.detect(g)
+    if bp: n_board += 1
+    seed = bp["distance_mm"] if bp else 550.0
+    mg = max_gradient(f)
+
+    # Stage counters, so a failure says WHERE it failed rather than just that
+    # it did. Backlighting is expected to kill the annulus before it kills the
+    # Hough centres -- the silhouette keeps the outer edge and loses the inner.
+    ea = it.fx * rig.radius_mm / seed
+    circ = cv2.HoughCircles(mg, cv2.HOUGH_GRADIENT, dp=1.5,
+                            minDist=max(8.0, ea*0.8), param1=110, param2=55,
+                            minRadius=max(4,int(ea*0.75)), maxRadius=int(ea*1.25))
+    face_box = None
+    if circ is not None:
+        n_hough += 1
+        if any(ring_radii(mg, float(x), float(y), float(r), rig) is not None
+               for x, y, r in circ[0][:12]):
+            n_ann += 1
+    r = find_rims_hough(f, rig, it.fx, it.fy, it.cx, it.cy,
+                        expected_distance_mm=seed, grad=mg)
+    if r is not None:
+        po = pose_from_rims(r[0], r[1], rig, it.fx, it.fy, it.cx, it.cy,
+                            pitch_hint_deg=0.0)
+        if plausible(po, rig):
+            n_pair += 1
+            dist_v.append(po["distance_mm"]); resid_v.append(po["span_residual_mm"])
+            x0 = int(min(r[0].cx, r[1].cx)-90); x1 = int(max(r[0].cx, r[1].cx)+90)
+            y0 = int(min(r[0].cy, r[1].cy)-90); y1 = int(max(r[0].cy, r[1].cy)+90)
+            face_box = (max(0,x0), max(0,y0), min(W,x1), min(H,y1))
+    if face_box is None:
+        face_box = (W//3, H//4, 2*W//3, 3*H//4)
+    fx0, fy0, fx1, fy1 = face_box
+    roi = g[fy0:fy1, fx0:fx1]
+    face = float(roi.mean()) if roi.size else 0.0
+    # Background, two ways. The whole-frame average dilutes a bright source
+    # sitting directly behind the head into a lot of dark room -- MEASURED
+    # 2026-09-20: a lamp placed behind the subject moved whole-frame bg/face
+    # from 0.82 to 0.83, i.e. not at all, while it was plainly changing the
+    # scene. What silhouettes a face is the HALO immediately around it, so
+    # measure that too and judge backlighting by it.
+    mask = np.ones(g.shape, bool); mask[fy0:fy1, fx0:fx1] = False
+    bg = float(g[mask].mean())
+    hw, hh = (fx1 - fx0), (fy1 - fy0)
+    hx0, hy0 = max(0, fx0 - hw), max(0, fy0 - hh)
+    hx1, hy1 = min(W, fx1 + hw), min(H, fy1 + hh)
+    halo_mask = np.zeros(g.shape, bool)
+    halo_mask[hy0:hy1, hx0:hx1] = True
+    halo_mask[fy0:fy1, fx0:fx1] = False
+    halo = float(g[halo_mask].mean()) if halo_mask.any() else bg
+    face_v.append(face); bg_v.append(bg); halo_v.append(halo)
+
+    disp = cv2.resize(f, (SW, int(SW*H/W)))
+    img = np.zeros((SH, SW, 3), np.uint8); img[:] = (16,16,16)
+    img[40:40+min(disp.shape[0], SH-40)] = disp[:min(disp.shape[0], SH-40)]
+    cv2.putText(img, "%s   %.0fs" % (LABEL.upper(), DUR-(time.time()-t0)),
+                (30, 34), F, 1.0, (200,200,200), 3, cv2.LINE_AA)
+    cv2.putText(img, "face %3.0f   halo %3.0f   halo/face %.2f" % (face, halo, halo/max(face,1)),
+                (30, SH-120), F, 1.3, (200,200,200), 3, cv2.LINE_AA)
+    cv2.putText(img, "glasses %d%%   board %d%%"
+                % (int(100*n_pair/max(n,1)), int(100*n_board/max(n,1))),
+                (30, SH-50), F, 1.3,
+                (80,230,80) if n_pair > 0.5*n else (60,140,255), 3, cv2.LINE_AA)
+    cv2.imshow("lt", img)
+    if (cv2.waitKey(1) & 0xFF) == ord('q'):
+        break
+cam.close(); cv2.destroyAllWindows()
+
+face_v, bg_v, halo_v = np.array(face_v), np.array(bg_v), np.array(halo_v)
+out = {
+    "label": LABEL, "frames": n,
+    "face_mean": float(face_v.mean()), "bg_mean": float(bg_v.mean()),
+    "bg_over_face": float(bg_v.mean()/max(face_v.mean(), 1.0)),
+    "halo_mean": float(halo_v.mean()),
+    "halo_over_face": float(halo_v.mean()/max(face_v.mean(), 1.0)),
+    "board_pct": 100.0*n_board/max(n,1),
+    "hough_pct": 100.0*n_hough/max(n,1),
+    "annulus_pct": 100.0*n_ann/max(n,1),
+    "pose_pct": 100.0*n_pair/max(n,1),
+    "dist_p50": float(np.median(dist_v)) if dist_v else None,
+    "dist_iqr": float(np.percentile(dist_v,75)-np.percentile(dist_v,25)) if len(dist_v)>3 else None,
+    "span_resid_p50": float(np.median(resid_v)) if resid_v else None,
+}
+print("=== %s ===  %d frames" % (LABEL, n))
+print("  face %.1f   frame bg %.1f (%.2f)   HALO %.1f (%.2f)   %s"
+      % (out["face_mean"], out["bg_mean"], out["bg_over_face"],
+         out["halo_mean"], out["halo_over_face"],
+         "<- BACKLIT" if out["halo_over_face"] > 1.3 else "(NOT backlit)"))
+print("  board            %5.0f%%" % out["board_pct"])
+print("  hough centres    %5.0f%%" % out["hough_pct"])
+print("  annulus formed   %5.0f%%   <- the edge backlighting kills first" % out["annulus_pct"])
+print("  full rim pose    %5.0f%%" % out["pose_pct"])
+if out["dist_p50"]:
+    print("  distance p50 %.1f mm  IQR %s  span_resid p50 %.2f mm"
+          % (out["dist_p50"],
+             "%.1f" % out["dist_iqr"] if out["dist_iqr"] else "-",
+             out["span_resid_p50"]))
+path = "board_artifacts/lighttest.jsonl"
+with open(path, "a") as fh:
+    fh.write(json.dumps(out) + "\n")
+print("appended to %s" % path)
