@@ -95,6 +95,85 @@ def _moments(P, w):
     return mu, sd
 
 
+class LinearMapper(object):
+    """Ridge-regularised LINEAR map on six features. Prefer this to GazeMapper.
+
+    MEASURED 2026-09-21, scored on 26 held-out targets, same sessions, same
+    feature vectors:
+
+        calibration points   LinearMapper (7 par)   GazeMapper poly2 (66 par)
+                         9         3.49 deg                 8.37 deg
+                        25         3.01 deg                 3.27 deg
+
+    Linear wins at EVERY point count tried, including 25 where the degree-2
+    model was supposed to have the data to justify itself. Dropping roll, t_x,
+    t_y, t_z and every quadratic term costs nothing measurable and buys a model
+    that cannot overfit a short grid -- 7 parameters against 66.
+
+    That matters most where it is hardest to get: 9 points plus linear lands
+    within half a degree of a 25-point fit, at a third of the sitting. For a
+    stranger at a faire, or anyone who cannot hold still for two minutes, that
+    is the difference between a usable calibration and none.
+
+    GazeMapper is kept because online recalibration (its ring buffer and
+    refit) lives there and has its own tests. This class is deliberately
+    minimal: fit, predict, nothing else.
+    """
+
+    COLS = (0, 1, 2, 3, 4, 5)      # l/r iris x,y, then yaw, pitch
+
+    def __init__(self, ridge=0.1):
+        # MEASURED on real 9-point data with STANDARDISED columns:
+        #   0.01 -> predicted span 1507 px against a 1459 px target
+        #   0.10 -> 1490 px                                  <- chosen
+        #   1.00 -> 1364 px, visibly shrinking toward the centre
+        self.ridge = float(ridge)
+        self._W = None
+        self._mu = None
+        self._sd = None
+
+    @property
+    def fitted(self):
+        return self._W is not None
+
+    def _raw(self, X):
+        return np.atleast_2d(np.asarray(X, dtype=np.float64))[:, list(self.COLS)]
+
+    def _design(self, X):
+        """STANDARDISED design matrix, and this is not optional.
+
+        The iris features are ~0.01-0.05 in magnitude, so reaching a 1920 px
+        screen needs coefficients of order 100,000. Ridge penalises
+        coefficients, so on RAW columns even a mild penalty crushes the fit --
+        MEASURED at ridge 0.3: training error 108 px and a predicted range of
+        27 px against a 243 px target. The cursor barely moved.
+
+        Standardising makes the penalty mean the same thing for every column.
+        See _moments() below; this module learned it the same way, twice.
+        """
+        Z = (self._raw(X) - self._mu) / self._sd
+        return np.hstack([np.ones((len(Z), 1)), Z])
+
+    def fit(self, X, y):
+        R = self._raw(X)
+        self._mu = R.mean(axis=0)
+        sd = R.std(axis=0)
+        sd[sd < 1e-9] = 1.0            # a constant column carries no signal
+        self._sd = sd
+        P = self._design(X)
+        Y = np.asarray(y, dtype=np.float64)
+        lam = self.ridge * np.eye(P.shape[1])
+        lam[0, 0] = 0.0                # never penalise the bias
+        self._W = np.linalg.lstsq(P.T @ P + lam, P.T @ Y, rcond=None)[0]
+        return self
+
+    def predict(self, x):
+        if self._W is None:
+            raise RuntimeError("LinearMapper.predict() before fit()")
+        out = self._design(x) @ self._W
+        return out[0] if np.ndim(x) == 1 else out
+
+
 class GazeMapper:
     """Fit and apply the feature -> screen mapping."""
 

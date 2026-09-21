@@ -840,6 +840,7 @@ calibration corrupts the one baseline that can only ever be recorded once.
 | `RESTART.md` | this file — session state and recovery |
 | `AUTOCAL.md` | auto-calibration design for deployment; B/C results |
 | `GLASSES.md` | glasses-rim fiducial: decision, accuracy, hardware findings |
+| `bin/talker` | **T-Rex Talker 3.0 as a gaze demo** — 3x2 AAC board, gaze aims and SPACE/ENTER speaks. Reads the real `.menu` files and plays the device's own clips. Logs offset-from-cell-centre on every selection, so it is a test and not a toy. |
 | `bin/aim` | **live view on the board's monitor** — aim the camera, tune booth lighting, watch BOARD/GLASSES lock lamps. Start here at any sitting. |
 | `bin/ladder` | distance ladder with on-screen guidance; auto-captures once in tolerance AND locked |
 | `bin/yawcheck` | rim yaw vs board yaw; board goes FLAT ON THE FOREHEAD so it rotates with the head |
@@ -929,6 +930,11 @@ Do not "clean these up" — each one cost a measurement. The reasoning is in
 - **`findContours` will not find a rim on a real face.** Broken into arcs and
   fused with brow/hair. Do not go back to it, and do not "fix" it with
   morphological closing — closing is what destroys the annulus.
+- **The UNO Q image has no audio player and no TTS.** No mpg123, ffplay, mpv,
+  espeak or spd-say. `pygame-ce` is present (the bunny game needs it) and its
+  mixer opens at 44100/-16/2, so play audio through `pygame.mixer` rather than
+  shelling out. A demo that needs `apt` on a faire morning is a demo that does
+  not run.
 - **Do not judge booth lighting by face brightness.** It does not predict
   detection: face 91–152 across runs, pose 48–84%, no ordering. Judge it by
   whether the GLASSES lamp in `bin/aim` stays green.

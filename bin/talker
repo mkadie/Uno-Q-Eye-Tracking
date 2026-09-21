@@ -1,0 +1,479 @@
+#!/usr/bin/env python3
+"""T-Rex Talker 3.0 on the gaze pipeline — a 3x2 AAC board driven by eye.
+
+An alternative test/demo to the bunny game, and a better one for the thing
+this project is actually for: the bunny game measures whether gaze can chase a
+moving target, this measures whether it can HOLD one of six large cells long
+enough to say something. That is the real task.
+
+WHY 3x2. MEASURED 2026-09-21: bare-faced angular error is 3.27 deg mean,
+5.56 deg p95, and at 504 mm one degree is 50 px. The rule of thumb is that a
+target must exceed twice the error:
+
+    3x2 on 1920x1080 -> 640 x 540 px cells (12.8 x 10.8 deg)
+      mean 3.27 deg  -> needs >= 327 px   width OK, height OK
+      p95  5.56 deg  -> needs >= 556 px   width OK, height TIGHT
+
+So 3x2 is comfortable on the mean and marginal vertically at p95, which is
+exactly where a demo should sit -- it will succeed most of the time and fail
+visibly rather than never. A 4x2 board (480 px wide) would be tight on BOTH
+axes at p95; that is why this is not 4x2 even though the CYD device's own
+base.menu is.
+
+GAZE AIMS, A KEY SELECTS. Space or Enter. This is not a placeholder for dwell
+selection -- it is the same split the whole project rests on: the UNO Q is a
+pointing sensor and the breath board is the switch. Aiming and triggering are
+separate abilities, and gaze gives you the first without the second. Dwell is
+the fallback for someone with no switch at all, not the default.
+
+    bin/talker                          calibrate, then the board
+    bin/talker --menu path/to/x.menu
+    bin/talker --mouse                  no camera, pointer only (for layout work)
+    bin/talker --dwell 1.2              also select by looking for 1.2 s
+
+Keys:  SPACE / ENTER speak    q quit    r recalibrate    b back    m mouse
+"""
+
+import argparse
+import math
+import os
+import random
+import shutil
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import cv2
+import numpy as np
+
+from spike import backends, calib, camera, config, features, menu as menulib
+from spike.oneeuro import OneEuroFilter2D
+from spike.targets import WIN, collect_point, grid_points, shuffled
+
+DEFAULT_MENU = "/home/trex/claude/coder/talker_v3/menus/base_fruitjam.menu"
+
+BG = (18, 18, 22)
+CELL = (38, 40, 52)
+CELL_HOVER = (64, 96, 150)
+CELL_SUB = (48, 44, 64)
+EDGE = (90, 94, 110)
+TEXT = (238, 238, 244)
+DIM = (150, 152, 165)
+ACCENT = (250, 200, 90)
+OK = (110, 220, 130)
+
+
+# --------------------------------------------------------------------------
+# Speech
+
+
+class Voice(object):
+    """Speak a press: its recorded clip if there is one, else a TTS voice.
+
+    The recorded clips are the device's own -- a real user's board says the
+    same words in the same voice, and a demo that substitutes a robot voice
+    for a child's recorded "Yes" is demoing something else. TTS is the
+    fallback so the board still works on a machine without the clips.
+    """
+
+    def __init__(self, sound_root=None, quiet=False):
+        self.sound_root = sound_root
+        self.quiet = quiet
+        self.player = None
+        self.tts = None
+        self.mixer = None
+        # pygame FIRST, and on this board it is the only thing that works:
+        # MEASURED 2026-09-21, the UNO Q image ships no mpg123, ffplay, mpv,
+        # espeak or spd-say. pygame-ce is already there because the bunny game
+        # needs it, and its mixer opens at 44100/-16/2 without an install. A
+        # demo that needs apt on a faire morning is a demo that does not run.
+        try:
+            import pygame
+            pygame.mixer.init()
+            self.mixer = pygame.mixer
+        except Exception:
+            self.mixer = None
+        for c in ("mpg123", "ffplay", "mpv", "cvlc"):
+            if shutil.which(c):
+                self.player = c
+                break
+        for c in ("espeak-ng", "espeak", "spd-say"):
+            if shutil.which(c):
+                self.tts = c
+                break
+        self._proc = None
+        self._cache = {}
+
+    def describe(self):
+        how = ("pygame.mixer" if self.mixer else
+               (self.player or "none"))
+        return "clips via %s   tts:%s   root:%s" % (
+            how, self.tts or "none",
+            os.path.basename(self.sound_root or "-"))
+
+    def _clip(self, press):
+        if not (self.sound_root and press.sound):
+            return None
+        # `sound = /button_sounds/yes.mp3` is absolute ON THE DEVICE, where the
+        # CIRCUITPY drive is the root. Here it is a path fragment, so strip the
+        # leading slash rather than reading from the host's real /.
+        rel = press.sound.lstrip("/")
+        p = os.path.join(self.sound_root, rel)
+        return p if os.path.exists(p) else None
+
+    def say(self, press):
+        """Non-blocking: the board must stay responsive while it talks."""
+        self.stop()
+        if self.quiet:
+            print("[say] %s" % press.text)
+            return "print"
+        clip = self._clip(press)
+        try:
+            if clip and self.mixer is not None:
+                snd = self._cache.get(clip)
+                if snd is None:
+                    snd = self.mixer.Sound(clip)
+                    self._cache[clip] = snd
+                snd.play()
+                return "clip"
+            if clip and self.player:
+                cmd = {"mpg123": ["mpg123", "-q", clip],
+                       "ffplay": ["ffplay", "-nodisp", "-autoexit", "-loglevel",
+                                  "quiet", clip],
+                       "mpv": ["mpv", "--really-quiet", clip],
+                       "cvlc": ["cvlc", "--play-and-exit", "--quiet", clip]}[self.player]
+                self._proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                              stderr=subprocess.DEVNULL)
+                return "clip"
+            if self.tts:
+                cmd = (["spd-say", press.text] if self.tts == "spd-say"
+                       else [self.tts, press.text])
+                self._proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                              stderr=subprocess.DEVNULL)
+                return "tts"
+        except Exception as e:
+            print("[say] failed: %s" % e)
+        print("[say] %s" % press.text)
+        return "print"
+
+    def stop(self):
+        if self.mixer is not None:
+            try:
+                self.mixer.stop()
+            except Exception:
+                pass
+        if self._proc is not None and self._proc.poll() is None:
+            try:
+                self._proc.terminate()
+            except Exception:
+                pass
+        self._proc = None
+
+
+# --------------------------------------------------------------------------
+# Board drawing
+
+
+def draw_board(canvas, m, hover, w, h, status, dwell_frac=0.0):
+    canvas[:] = BG
+    cols, rows = m.columns, m.rows
+    top = 90
+    cw = w // cols
+    ch = (h - top - 70) // rows
+    pad = 14
+
+    for r in range(rows):
+        for c in range(cols):
+            p = m.at(c, r)
+            x0, y0 = c * cw + pad, top + r * ch + pad
+            x1, y1 = (c + 1) * cw - pad, top + (r + 1) * ch - pad
+            is_hover = (hover is not None and hover == (c, r) and p is not None)
+            if p is None:
+                fill = (26, 26, 32)
+            elif is_hover:
+                fill = CELL_HOVER
+            elif p.is_submenu:
+                fill = CELL_SUB
+            else:
+                fill = CELL
+            cv2.rectangle(canvas, (x0, y0), (x1, y1), fill, -1)
+            cv2.rectangle(canvas, (x0, y0), (x1, y1),
+                          ACCENT if is_hover else EDGE, 3 if is_hover else 1)
+            if p is None:
+                continue
+
+            # Word-wrap the label to the cell. A clipped word on an AAC board
+            # is a cell the user cannot identify.
+            words = p.label.replace("/", " / ").split()
+            lines, cur = [], ""
+            scale = 1.9
+            for wd in words:
+                t = (cur + " " + wd).strip()
+                (tw, _), _ = cv2.getTextSize(t, cv2.FONT_HERSHEY_SIMPLEX, scale, 4)
+                if tw > (x1 - x0) - 40 and cur:
+                    lines.append(cur)
+                    cur = wd
+                else:
+                    cur = t
+            if cur:
+                lines.append(cur)
+            ty = (y0 + y1) // 2 - (len(lines) - 1) * 32
+            for ln in lines:
+                (tw, th), _ = cv2.getTextSize(ln, cv2.FONT_HERSHEY_SIMPLEX, scale, 4)
+                cv2.putText(canvas, ln, ((x0 + x1 - tw) // 2, ty + th // 2),
+                            cv2.FONT_HERSHEY_SIMPLEX, scale, TEXT, 4, cv2.LINE_AA)
+                ty += 64
+            if p.is_submenu:
+                cv2.putText(canvas, "more >", (x0 + 18, y1 - 18),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, DIM, 2, cv2.LINE_AA)
+            if is_hover and dwell_frac > 0:
+                bw = int((x1 - x0 - 40) * min(1.0, dwell_frac))
+                cv2.rectangle(canvas, (x0 + 20, y1 - 26),
+                              (x0 + 20 + bw, y1 - 14), OK, -1)
+
+    cv2.putText(canvas, m.name, (26, 58), cv2.FONT_HERSHEY_SIMPLEX, 1.4,
+                TEXT, 3, cv2.LINE_AA)
+    cv2.putText(canvas, status, (26, h - 26), cv2.FONT_HERSHEY_SIMPLEX, 0.85,
+                DIM, 2, cv2.LINE_AA)
+
+
+def cell_at(x, y, m, w, h):
+    top = 90
+    cw = w // m.columns
+    ch = (h - top - 70) // m.rows
+    if y < top or y > top + ch * m.rows:
+        return None
+    c = int(x // cw)
+    r = int((y - top) // ch)
+    if 0 <= c < m.columns and 0 <= r < m.rows:
+        return (c, r)
+    return None
+
+
+def cell_centre(c, r, m, w, h):
+    top = 90
+    cw = w // m.columns
+    ch = (h - top - 70) // m.rows
+    return (c * cw + cw / 2.0, top + r * ch + ch / 2.0)
+
+
+# --------------------------------------------------------------------------
+
+
+def calibrate(cam, be, cfg, canvas, n_pts, rng):
+    """Short grid + LINEAR model.
+
+    MEASURED 2026-09-21: 9 points with the linear model gives 3.49 deg against
+    3.01 for 25 points -- half a degree for three times the sitting -- while 9
+    points with the degree-2 model gives 8.37. For someone who cannot hold
+    still for two minutes, the short grid is not a compromise, it is the only
+    one that happens.
+    """
+    pts = shuffled(grid_points(n_pts, cfg["screen"]["width_px"],
+                               cfg["screen"]["height_px"]), rng)
+    X, y = [], []
+    for i, pt in enumerate(pts):
+        got = collect_point(cam, be, cfg, canvas, pt, "%d / %d" % (i + 1, len(pts)))
+        if got is None:
+            return None
+        X.append(got)
+        y.append(pt)
+    if len(X) < 4:
+        return None
+    return calib.LinearMapper().fit(np.asarray(X), np.asarray(y, dtype=float))
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--menu", default=DEFAULT_MENU)
+    ap.add_argument("--points", type=int, default=9)
+    ap.add_argument("--mouse", action="store_true",
+                    help="no camera; pointer only, for layout work")
+    ap.add_argument("--dwell", type=float, default=0.0,
+                    help="also select by looking for this many seconds")
+    ap.add_argument("--sounds", default=None,
+                    help="root holding button_sounds/ (default: next to the menu)")
+    ap.add_argument("--quiet", action="store_true", help="print instead of speaking")
+    ap.add_argument("--windowed", action="store_true")
+    ap.add_argument("--seed", type=int, default=None)
+    args = ap.parse_args()
+
+    cfg = config.load(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "config.toml"))
+    W = cfg["screen"]["width_px"]
+    H = cfg["screen"]["height_px"]
+
+    menu_dir = os.path.dirname(os.path.abspath(args.menu))
+    m = menulib.load(args.menu)
+    if m.columns * m.rows != 6:
+        print("note: %s is %dx%d, not 3x2 -- drawing it anyway"
+              % (os.path.basename(args.menu), m.columns, m.rows))
+    sound_root = args.sounds or os.path.dirname(menu_dir)
+    voice = Voice(sound_root, quiet=args.quiet)
+    print("menu  : %s (%dx%d, %d presses)" % (m.name, m.columns, m.rows,
+                                              len(m.presses)))
+    print("voice : %s" % voice.describe())
+
+    cam = be = mapper = None
+    if not args.mouse:
+        c = cfg["camera"]
+        cam = camera.Camera(c["device"], c["width"], c["height"], c["fps"],
+                            c["fourcc"], c["exposure"], c["focus"],
+                            c["gain"]).open()
+        be = backends.create(prefer=cfg["inference"]["backend"])
+
+    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+    if not args.windowed:
+        cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    canvas = np.zeros((H, W, 3), np.uint8)
+
+    seed = args.seed if args.seed is not None else random.randrange(2 ** 31)
+    rng = np.random.default_rng(seed)
+    if cam is not None:
+        print("calibrating %d points (seed %d)..." % (args.points, seed))
+        mapper = calibrate(cam, be, cfg, canvas, args.points, rng)
+        if mapper is None:
+            print("calibration aborted; falling back to the pointer")
+
+    mouse = {"x": W // 2, "y": H // 2, "click": False}
+
+    def on_mouse(event, x, y, flags, param):
+        mouse["x"], mouse["y"] = x, y
+        if event == cv2.EVENT_LBUTTONDOWN:
+            mouse["click"] = True
+    cv2.setMouseCallback(WIN, on_mouse)
+
+    filt = OneEuroFilter2D(cfg["filter"]["min_cutoff"], cfg["filter"]["beta"],
+                           cfg["filter"]["d_cutoff"])
+    stack = []                       # (menu, menu_dir) breadcrumbs
+    hover = None
+    dwell_since = None
+    use_mouse = args.mouse or mapper is None
+    # Every selection is a MEASUREMENT: where the gaze was against the cell
+    # it landed in. That is what makes this a test and not a toy.
+    log = []
+    t_prev = time.perf_counter()
+
+    while True:
+        now = time.perf_counter()
+        dt = now - t_prev
+        t_prev = now
+
+        gx = gy = None
+        if not use_mouse and cam is not None:
+            frame = cam.read()
+            if frame is not None:
+                size = cfg["inference"]["input_size"]
+                fh, fw = frame.shape[:2]
+                s = float(size) / max(fh, fw)
+                small = (cv2.resize(frame, (int(fw * s), int(fh * s)),
+                                    interpolation=cv2.INTER_AREA)
+                         if s < 1 else frame)
+                rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
+                res = be.detect(rgb, full=None if s >= 1
+                                else cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                if res.ok:
+                    try:
+                        feat, diag = features.extract(res.landmarks,
+                                                      rgb.shape[1], rgb.shape[0])
+                        if not features.is_blinking(
+                                diag, cfg["inference"]["blink_ear_threshold"]):
+                            px, py = mapper.predict(feat)
+                            gx, gy = filt(float(px), float(py), now)
+                    except Exception:
+                        pass
+        if use_mouse or gx is None:
+            gx, gy = mouse["x"], mouse["y"]
+
+        gx = min(max(float(gx), 0.0), W - 1.0)
+        gy = min(max(float(gy), 0.0), H - 1.0)
+        cell = cell_at(gx, gy, m, W, H)
+        press = m.at(*cell) if cell else None
+
+        if cell != hover:
+            hover = cell
+            dwell_since = now if (press is not None and args.dwell > 0) else None
+        frac = 0.0
+        if args.dwell > 0 and dwell_since is not None and press is not None:
+            frac = (now - dwell_since) / args.dwell
+
+        src = "mouse" if use_mouse else "gaze"
+        status = ("%s   SPACE/ENTER speak   b back   r recalibrate   m %s   q quit"
+                  % (src, "gaze" if use_mouse else "mouse"))
+        draw_board(canvas, m, hover, W, H, status, frac)
+        cv2.circle(canvas, (int(gx), int(gy)), 16, (255, 255, 255), 2)
+        cv2.circle(canvas, (int(gx), int(gy)), 3, ACCENT, -1)
+        cv2.imshow(WIN, canvas)
+        k = cv2.waitKey(1) & 0xFF
+
+        fire = k in (32, 13, 10) or mouse["click"] or (frac >= 1.0)
+        mouse["click"] = False
+
+        if k == ord('q'):
+            break
+        if k == ord('m'):
+            # Only a real toggle when there is something to toggle to.
+            if mapper is None:
+                print("no gaze model fitted; staying on the pointer")
+            else:
+                use_mouse = not use_mouse
+            continue
+        if k == ord('b') and stack:
+            m, menu_dir = stack.pop()
+            hover, dwell_since = None, None
+            continue
+        if k == ord('r') and cam is not None:
+            nm = calibrate(cam, be, cfg, canvas, args.points, rng)
+            if nm is not None:
+                mapper, use_mouse = nm, False
+                if hasattr(filt, "reset"):
+                    filt.reset()
+            continue
+
+        if fire and press is not None:
+            cx, cy = cell_centre(cell[0], cell[1], m, W, H)
+            log.append((press.label, gx - cx, gy - cy, src))
+            dwell_since = now
+            if press.is_submenu:
+                path = menulib.resolve(press.submenu, menu_dir)
+                if path and os.path.exists(path):
+                    stack.append((m, menu_dir))
+                    m = menulib.load(path)
+                    menu_dir = os.path.dirname(os.path.abspath(path))
+                    hover = None
+                else:
+                    print("submenu not found: %s" % path)
+            else:
+                voice.say(press)
+
+    voice.stop()
+    if cam is not None:
+        cam.close()
+    if be is not None:
+        be.close()
+    cv2.destroyAllWindows()
+
+    if log:
+        d = np.array([[a, b] for _, a, b, _ in log], dtype=float)
+        r = np.hypot(d[:, 0], d[:, 1])
+        mmx = cfg["screen"]["width_mm"] / float(W)
+        D = cfg["screen"]["viewing_distance_mm"]
+        deg = np.degrees(np.arctan(r * mmx / D))
+        print("\n%d selections" % len(log))
+        print("  offset from cell centre: p50 %.0f px (%.2f deg)  p95 %.0f px (%.2f deg)"
+              % (np.percentile(r, 50), np.percentile(deg, 50),
+                 np.percentile(r, 95), np.percentile(deg, 95)))
+        print("  worst %.0f px (%.2f deg)" % (r.max(), deg.max()))
+        # A cell is 640x540 px; half of that is the margin before a miss.
+        half = min(W / m.columns, (H - 160) / m.rows) / 2.0
+        print("  margin to the cell edge: %.0f px. %d of %d landed in the outer "
+              "third of their cell." % (half, int((r > half * 2 / 3.0).sum()), len(r)))
+        for lab in sorted({l for l, _, _, _ in log}):
+            n = sum(1 for l, _, _, _ in log if l == lab)
+            print("    %-22s %d" % (lab, n))
+
+
+if __name__ == "__main__":
+    main()
