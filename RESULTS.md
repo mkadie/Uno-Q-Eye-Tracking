@@ -1198,3 +1198,46 @@ the worst case is not. Also uncontrolled here: distance varied 515–669 mm
 between conditions, and the ladder showed distance alone moves pose by tens of
 points, so these percentages carry that confound. The backlit2 row is not
 usable — the board was out of frame and distance IQR blew out to 154.9 mm.
+
+## 2026-09-21 — Gate 1c bare-faced (update.md §4.4). CONFOUNDED by head drift.
+
+`bin/calibrate --val-points 26`, shuffled (seed 863568333), no glasses, no rig.
+
+| | value |
+|---|---|
+| calibration points | 9 |
+| training error | 2.65° mean, 5.79° p95 *(self-flattery)* |
+| **validation, 26 held-out points** | **6.61° mean, 13.60° p95**, worst 14.50° |
+| in pixels | **333 px mean, 693 px p95** |
+| implied minimum target | 244 mm → a 1×1 grid, i.e. too coarse to use |
+
+**Do not quote the 6.61° as accuracy.** The drift check built into the tool
+fired: head **pitch moved 16.1 sd** between the calibration and validation
+blocks, with `t_x` at 2.2 sd and `t_y` at 1.4 sd. The gap was only 5 s, so
+this is a genuine head movement, not slow drift — the validation grid was
+scored against a head the fit never saw. The tool's own verdict: *read the
+validation error as DRIFT, not accuracy.*
+
+**The one clean comparison is in pixels**, because it does not depend on the
+viewing-distance convention: **333 px here against run 7's 477 px.** Both
+convert the same underlying pixel error, so the pipeline really has improved
+since run 7 — that part is not confounded by drift *or* by distance.
+
+**`viewing_distance_mm` corrected 584 → 504.** 584 was a stale 23-inch reading
+from a different seating position; 504 was measured later and the subject
+independently reported "around 500 mm" at this sitting — two estimates
+agreeing to 1%. **Every angular error scales directly with this, so 584 was
+inflating every degree figure by 16%.** Consequence for the record: run 7's
+8.22°/5.12° were computed at 584. *If* that sitting was also at 504 — not
+confirmed — its true figures were **9.52° / 5.93°**. Not retroactively
+rewritten, but the earlier numbers cannot be compared to this one in degrees
+without knowing each sitting's distance. **Measure the distance every sitting.**
+
+**Lighting was poor and is a candidate explanation for part of the error.**
+Face detection was 100% (30/30), but brightness on the detected face box was
+**40.3** against the 128.7 measured earlier the same evening. A dim iris is a
+noisy iris. Recorded here so the run is interpretable rather than discarded.
+
+**Repeat this run** with (a) the head held still between blocks — the two grids
+are minutes apart and nothing restrains the head, and (b) the lamp back to the
+128.7 arrangement. Until then Gate 1c bare-faced is **not measured**.

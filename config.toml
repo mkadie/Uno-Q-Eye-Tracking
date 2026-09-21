@@ -92,8 +92,18 @@ width_px            = 1920
 height_px           = 1080
 width_mm            = 338    # measured 2026-08-08: 13.300 in active area
 height_mm           = 190    # measured 2026-08-08:  7.475 in active area
-viewing_distance_mm = 584    # measured 23 in, eye to screen. Angular error is
-                             # meaningless without this, so measure it.
+viewing_distance_mm = 504    # CORRECTED 2026-09-21. Was 584 (23 in), which is
+                             # a stale reading from a different seating
+                             # position. 504 mm was measured later, and the
+                             # subject independently reported "around 500 mm"
+                             # at the bare-faced Gate 1c sitting -- two
+                             # estimates agreeing to 1%.
+                             #
+                             # EVERY angular error scales directly with this,
+                             # so 584 was inflating every degree figure by
+                             # 16%. Angular error is meaningless without it,
+                             # so measure it -- and re-measure it whenever the
+                             # chair moves.
 
 # Sanity check on the above: 13.300 / 7.475 = 1.779 against 16:9 = 1.7778, so
 # the active area agrees with a 1080p panel to 0.06%. Worth doing every time
