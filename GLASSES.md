@@ -3,6 +3,37 @@
 Closed-form 6-DOF head pose from round lensless party glasses. The circular
 rims **are** the fiducial — nothing is printed, cut or glued onto them.
 
+> ## HARDWARE RESULT 2026-09-20 — read before the synthetic tables below
+>
+> Measured against the printed marker board in the same frames:
+>
+> - **Distance WORKS.** 100% detection and **3.7 mm** error IQR at 550 mm;
+>   12.1 mm median across a 450–700 mm ladder. The bias is a board plane
+>   offset, not a radius error.
+> - **Yaw DOES NOT WORK.** gain **0.198**, correlation **0.138**, rms 22.9°.
+>   No signal.
+>
+> **The synthetic yaw table below is not wrong, its noise assumption is.** It
+> reports 0.435° max error and says "against 0.5 px of fitting noise". Real
+> measured fit noise on a squared-up subject at 570 mm, where the true radius
+> difference is ~0, is **4.2 px** — the two rims fitted 58.5 and 54.3 px.
+>
+> Yaw is read as a *difference of two radii*, so that noise lands directly on
+> it: a 20° turn at 570 mm separates the radii by **2.2 px** against 4.2 px of
+> noise. **SNR 0.53 — the signal is below the noise.** ±5° would need the pair
+> good to 0.56 px, close to the 0.5 px the simulation assumed and about **7×
+> better than achieved**. The simulation was right about the geometry and
+> optimistic about the fitting by an order of magnitude, which is exactly the
+> gap real frames exist to expose.
+>
+> Distance survives because it comes from the major axis of each rim
+> separately (trap b), where 4.2 px on a ~60 px radius is a few percent — not
+> from a difference of two nearly equal numbers.
+>
+> **Consequence: the rims give DISTANCE, not orientation.** See `RESULTS.md`
+> for the ladder and the yaw sweep. Untried idea with a real argument behind
+> it: yaw from the **mean axis ratio** of the two coplanar rims.
+
 ## UPDATE 2026-09-19 — the rig is now CALIPERED, and the photo was wrong
 
 `update.md` delivered measured constants. They supersede everything derived
@@ -83,6 +114,9 @@ intrinsics at 1920×1080 and 70.4° HFOV, noise-free, pitch hint supplied:
 | roll | **0.008°** | **0.036°** | < 1° | pass |
 
 Against 0.5 px of fitting noise, yaw error stays under 2° at 12° yaw.
+**MEASURED fit noise on real frames is 4.2 px, not 0.5 px** — see the hardware
+banner at the top of this file. This row did not survive contact with a real
+face.
 
 These are **synthetic** numbers: a rig of known dimensions projected through a
 known camera, fitted with the same `cv2.fitEllipse` the production path uses.

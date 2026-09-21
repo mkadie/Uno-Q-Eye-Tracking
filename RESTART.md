@@ -1,72 +1,129 @@
 # RESTART — read this first after a crash or power loss
 
-Last updated: **2026-09-16** — board reset cleanly (85 s, no crash). **The
-power fault looks fixed**: a clean shutdown after 14d22h uptime, the first this
-board has ever logged. See "hub power".
+Last updated: **2026-09-20** (late session, ran past midnight into 09-21).
 
-After this reset: governor back to `schedutil` (run `./hil perf`), camera moved
-`video0 -> video2` (the by-id path in `config.toml` absorbed it, as designed),
-monitor still detected, `bin/probe` exits 0 with `gain = 0`.
+## The 60-second version
 
-**UPDATE 2026-09-19 PROCESSED** (`/home/trex/claude/docs/update.md`). The
-glasses are now calipered — outer 50.0 mm, inner 44.0 mm — which supersedes
-the photo-derived 23.5 mm radius and explains the hardware run: the detector
-had been fitting the two rim edges MERGED at the midline. `ring_pair()`,
-`spike/intrinsics.py`, `spike/marker_board.py`, `spike/rig_geometry.py` and
-`tools/calibrate_camera.py` are all in. Suite **145**.
+The **glasses-rim fiducial now measures distance on real hardware** and does
+**not** measure yaw. Both are measured against the printed marker board in the
+same frames, not asserted. Everything below is in `RESULTS.md` with the
+numbers; this is the orientation.
 
-**The two things that gate everything else, neither done:**
+| thing | status |
+|---|---|
+| camera intrinsics | **DONE** — `camera_intrinsics.json`, RMS 0.306 px, fx/fy agree to 0.2% |
+| glasses calipered | **DONE** — outer 50.0, inner 44.0, separation **61.5**, spread ±0.2 over 10 pairs |
+| `RigSpec.trusted` | **True** (`measured_n = 10`) |
+| rim **distance** | **WORKS** — bias is a plane offset, IQR 3.7 mm at best, 12.1 mm median |
+| rim **yaw** | **DOES NOT WORK** — gain 0.198, correlation 0.138. Do not retry as-is. |
+| distance ladder 450–700 | **DONE**, all six rungs |
+| lighting conditions | **partial** — mild backlight fine; the daylight/window case is NOT done |
+| Gate 1c bare-faced | still the number that forks the schedule; see below |
 
-1. **Run `tools/calibrate_camera.py`.** Until `camera_intrinsics.json` exists,
-   every distance is proportionally wrong by however far this C920 differs
-   from its spec sheet. Target RMS < 0.5 px, and `fx`/`fy` within 2% or the
-   capture did not tilt enough.
-2. **Caliper the centre-to-centre separation**, ten pairs, record the spread.
-   Expected 67–75 mm. Distance testing does NOT wait on this.
+Suite is **158 passing**, no hardware needed.
 
-Then the experiment in `update.md` §4: the distance ladder at 450–700 mm with
-all three estimators on the same frames. §4.4 says the one that matters most
-is **bare-faced `bin/calibrate`** — it needs none of the fiducial work.
+## What changed this session, and what it means
 
-**THE PROJECT HAS PIVOTED TWICE since Gate 1c.** In order:
+**Distance works.** At 550 mm: 100% detection, error IQR **3.7 mm**. Median
+across the ladder is 12.1 mm. The ~22 mm bias is the marker board sitting
+behind the lens plane, **not** a radius error — six rungs separate those two
+hypotheses cleanly (constant offset 7.7 mm rms vs proportional 9.6 mm rms,
+corr(distance, error) = +0.50). So `radius_mm = 25.0` is fine. An earlier
+single-distance claim that it was ~2% high is **retracted**; at one distance a
+plane offset and a scale error are indistinguishable.
 
-1. **Glasses fiducial** (`GLASSES.md`) — 6-DOF head pose from the circular rims
-   of costume glasses. Geometry verified to sub-mm/sub-degree on synthetic
-   ground truth; real-rim detection works only intermittently and the black
-   frames are the worst case. Coloured frames were due 2026-09-17.
-2. **Bunny Feeding Frenzy driven by gaze** — the game now calibrates and plays
-   by eye on this board. See `/home/trex/claude/coder/games/bunny_feeding_frenzy/GAZE.md`,
-   which is the authoritative doc for that work. **Read it before touching the
-   game.** The board runs it from `~/bunny`.
+**700 mm is near the working limit** and for a geometric reason, not a tunable
+one: the annulus gap is 9.1 px at 450 and 5.9 px at 700 against a 4.0 px
+floor. Detection falls to 57%. **Seat visitors at 500–650.**
 
-**The single most important open finding, from playing the game:** the
-VERTICAL gaze axis is unusable. In play the aim pins to the bottom of the
-screen in one session and the top in the next — arbitrary, not drifting —
-which matches the spike's own `r_y = 0.22` against `r_x = 0.78–0.90`. The fix
-that follows from the measurement is to steer with gaze-x only and pin y to
-the target band; it is specified but NOT implemented. Do that before any more
-smoothing or calibration work.
+**Yaw is dead at this scale.** gain 0.198, correlation 0.138 — no signal, from
+frames whose distance is good to millimetres. The arithmetic: yaw is read as a
+*difference of two radii*, and at 570 mm a 20° turn moves them apart by
+**2.2 px** while measured fit noise is **4.2 px**. SNR 0.53. ±5° would need
+0.56 px, ~7× better than achieved. No filter recovers this.
 
-**GATE 1c — run 7 is the first CLEAN measurement; runs 1-6 were confounded.**
-Both grids were presented in raster order, making elapsed time collinear with
-target y (r = +0.98), which inflated every head-pose/time correlation. Order is
-now randomised. Clean numbers: **8.22° at 0 clicks (chance is 7.78°), falling
-to 5.12° mean / 7.95° p95 by 20 online clicks.** Online recalibration works
-*directionally* but plateaus around 5°. **On PLAN.md's criteria that is
-Path C — diagnose, do not build.** Best remaining lead: iris resolution
-(8.3 px at 720p vs 13.2 px at 1080p). See "Gate 1c" below.
+  Worth trying next (NOT yet measured): yaw from the **mean axis ratio** of
+  the two rims. They are coplanar so should agree, which averages the per-rim
+  noise down. `CLAUDE.md` trap (c) rejects eccentricity-derived yaw for
+  carrying ~2° of systematic bias — true, but 2° of bias beats 19° of noise,
+  and the depth-difference path it recommends is what just failed. Record the
+  axis ratios; `bin/yawcheck` did not.
 
-**`bin/probe` exits 0 in bright light and fails on `gain` in a dim room** — the
-C920 raises gain itself when the light is low. That makes probe your light
-check: run it before any sitting, and record the Gate 1c baseline bright. See
-"`gain` is a light meter".
+**Design consequence: the rims give DISTANCE, not orientation.** Head rotation
+has to come from the marker board, the face mesh, or an accepted ~2°
+eccentricity bias. The gaze mapping's `t_z` feature is fed by distance, so it
+is unaffected — which is the part that matters for 30 Sep.
 
-This file exists because the dev machine has crashed mid-session more than
-once. It records what is done, what is next, and the exact commands to get
-back to a working state. Keep it updated at the end of every working session
-and after every gate.
+## Four bugs found this session, all silent
 
----
+Each presented as "the rim is not visible". Do not reintroduce them.
+
+1. **`close_px = 3` was deleting the rim.** The two edges of a 3 mm rim are
+   ~7–10 px apart at 1920; a 3×3 close bridges them and fuses the ring into a
+   blob that no longer fits an ellipse. Same frame: `close_px=3` → **0**
+   candidates survived, `close_px=0` → 3. Now defaults 0. Anything above 0
+   forfeits annulus mode.
+2. **Grayscale cannot see an orange rim on lit skin** — nearly isoluminant.
+   The right lens was never found in *any* frame until `max_gradient()` (max
+   per-pixel gradient over B,G,R,a\*,b\*). 2 candidates/one lens → 7/both.
+   This is not colour thresholding: no colour is picked and there is no cut.
+3. **A square is a perfect ellipse by every gate but residual.** All four
+   ArUco markers were being reported as flawless rims — `fitEllipse` on a
+   square gives axis_ratio 1.00 and coverage 1.00. Only residual separates
+   them (markers 0.100–0.106, real rim 0.021–0.044). `max_residual` 0.18 →
+   0.06. Matters beyond the board: a faire is full of screens and keycaps.
+4. **`findContours` cannot deliver the rim at all on a real face.** The
+   outline is present at the right size and place but arrives broken into arcs
+   AND fused with brow/hair edges, so no connected component is a ring — the
+   best-scoring contour in the frame was the **eye**. Replaced by Hough
+   centres + `ring_radii()` (radial profile, median over 180 angles, so a gap
+   costs a few angles) + `ring_ellipse()`.
+
+**Honest correction:** an earlier claim in this session that "annulus 100%" was
+a detector win was **wrong**. At 450 mm all twelve Hough candidates passed the
+1.1364 ±6% ratio check — `ring_radii` searches peak pairs across a ±45% span
+and can nearly always find one. The annulus is a weaker filter than it sounds.
+What actually discriminates is ranking pairs by **span residual** (a
+measurement the pair did not choose) plus the geometric depth bound
+`|z_r − z_l| ≤ separation_mm · sin(max_yaw)`.
+
+## Lighting — the important one is NOT done
+
+| condition | face | halo/face | annulus | pose |
+|---|---|---|---|---|
+| frontlit | 128.7 | – | 100% | 52% |
+| lamp behind, front lights on | 152.2 | – | 100% | 72% |
+| front lights OFF | 91.2 | **1.21** | 100% | **84%** |
+
+Mild backlighting **helped**; the annulus never dropped below 100%. The
+predicted "backlight kills the inner edge first" did not appear at this level.
+
+Two measurement lessons: **measure the halo around the head, not the frame** (a
+lamp behind the subject moved whole-frame bg/face 0.82 → 0.83, i.e. reported
+nothing, while the halo read 1.21); and **face brightness does not predict
+detection** — face spanned 91–152 while pose ranged 48–84% with no ordering,
+the worst pose coming with the best-lit face.
+
+**TODO, needs daylight:** sit with a **window behind you** and run
+`bin/lighttest window 40`. halo/face 1.21 was a lamp on a wall at 00:40; a
+glazed hall could exceed 3. The sign of the effect is known, the worst case is
+not. Distance also varied 515–669 mm across those runs, which is a real
+confound since the ladder shows distance alone moves pose by tens of points.
+
+## Still open, roughly in priority order
+
+1. **Bare-faced `bin/calibrate`** (update.md §4.4) — the number that forks the
+   schedule and needs none of the fiducial work. A 2026-09-19 run exists but
+   is not written into `RESULTS.md`.
+2. **The window/backlit test** above. 10 minutes, needs daylight.
+3. **Yaw from mean axis ratio** — the one untried idea with a real argument
+   behind it.
+4. **`GAZE_HORIZONTAL_ONLY` for the game** — specified, never implemented, and
+   now doubtful: the vertical axis was `r_y = 0.22` in the spike but the
+   2026-09-19 bare-faced run gave `r_y = 0.755` vs `r_x = 0.563`, which
+   reverses it. **Re-measure before acting on either number.**
+5. Bare-face-mesh column of update.md's ladder table — never run.
+6. `config.toml [screen] viewing_distance_mm` says 584; 504 was measured.
 
 ## Where we are right now
 
@@ -722,9 +779,17 @@ calibration corrupts the one baseline that can only ever be recorded once.
 | `RESTART.md` | this file — session state and recovery |
 | `AUTOCAL.md` | auto-calibration design for deployment; B/C results |
 | `GLASSES.md` | glasses-rim fiducial: decision, accuracy, hardware findings |
-| `bin/rimcheck` | find real rims on a real camera; also measures the rig |
+| `bin/aim` | **live view on the board's monitor** — aim the camera, tune booth lighting, watch BOARD/GLASSES lock lamps. Start here at any sitting. |
+| `bin/ladder` | distance ladder with on-screen guidance; auto-captures once in tolerance AND locked |
+| `bin/yawcheck` | rim yaw vs board yaw; board goes FLAT ON THE FOREHEAD so it rotates with the head |
+| `bin/lighttest` | named lighting condition -> `board_artifacts/lighttest.jsonl` |
+| `bin/boardrim` | paired board-vs-rim distance, the first version of the ladder |
+| `bin/rimcheck` | older contour-based rim finder. **Superseded** by `find_rims_hough`; kept for the rig-measuring mode. |
 | `bin/repeat` | within-session repeatability (the sensor-ceiling test) |
 | `bin/live` | standalone gaze cursor on the board's monitor |
+| `tools/hcheck.py` | one frame: every Hough candidate, its annulus ratio, what got chosen and why. **The first thing to run when the glasses will not lock.** |
+| `tools/rimpair.py` | which `find_rims` stage kills the pair; `[close_px] [gray\|maxgrad]` |
+| `tools/rimedge.py` | colour \| max_gradient \| Canny panels around one rim |
 | **the game** | `~/claude/coder/games/bunny_feeding_frenzy` — see its `GAZE.md` |
 | `config.toml` | tuned values, each with a MEASURED comment saying why |
 | `hil` | dev-machine driver for board runs; `.hil.env` holds the address |
@@ -761,6 +826,21 @@ Do not "clean these up" — each one cost a measurement. The reasoning is in
 - `exposure = 156` — the C920 quantises exposure to EV stops *while streaming*.
   250 was silently running at 156 anyway.
 - `focus_absolute = 30` — peak iris sharpness, 5.4× better than the far end.
+- `[frame_rig] rim_exposure = 312`, `rim_gain = 192` — **rim detection needs
+  its own exposure.** `[camera] exposure = 156, gain = 0` is a *gaze* setting
+  (short, so a saccade does not smear) and left the face at mean 20 with the
+  rim edges under the noise. The trap is that exposure 1250 also *reads* as
+  well exposed (face mean 113) and is worse than useless: 125 ms smears the
+  rim and the lens detected at 156 vanishes entirely. **Brighter and blinder
+  at once. Fix it with gain, not time.**
+- `[frame_rig] separation_mm = 61.5` — measured, and **not** the 67–75 mm
+  predicted from the 137 mm frame width; that prediction was 15.4% high. The
+  71.0 placeholder made the pair test hunt for a separation/radius of 2.84
+  when the truth is 2.46, so it scored every genuine rim pair as a poor match.
+  Measured twice over the two inner circles so it checks itself (closest
+  inside 18 mm, farthest 105 mm → inner_d 43.5, sep 61.5 from both).
+- `[frame_rig] max_residual = 0.06`, `close_px = 0` — see the four silent bugs
+  above. Neither is a taste call; both were measured.
 
 ## Known dead ends — don't re-derive these
 
@@ -774,3 +854,13 @@ Do not "clean these up" — each one cost a measurement. The reasoning is in
   14.1–14.4. Report it as a camera-quantisation tail, not a compute stall.
 - **Camera controls go on AFTER stream start.** The C920 resets UVC controls at
   `VIDIOC_STREAMON`, silently.
+- **Rim yaw from the depth difference is noise-limited, not mis-tuned.** 2.2 px
+  of signal at 20° against 4.2 px of fit noise at 570 mm. Do not re-attempt it
+  by filtering, seeding or smoothing; the information is not there. The only
+  live idea is the mean axis ratio (see above).
+- **`findContours` will not find a rim on a real face.** Broken into arcs and
+  fused with brow/hair. Do not go back to it, and do not "fix" it with
+  morphological closing — closing is what destroys the annulus.
+- **Do not judge booth lighting by face brightness.** It does not predict
+  detection: face 91–152 across runs, pose 48–84%, no ordering. Judge it by
+  whether the GLASSES lamp in `bin/aim` stays green.

@@ -115,6 +115,78 @@ lighting drifts all day means any colour threshold that works at setup fails
 after lunch. Find the ellipse geometrically, then read colour from inside it
 purely as a visitor-identity label.
 
+**But run the edge detector on `max_gradient()`, not on luminance.** MEASURED
+2026-09-20: an orange rim against brightly lit skin is close to isoluminant,
+and in grayscale the right lens was **never found in any frame of a whole
+session**. The left one survived only because it happened to sit against the
+dark eye socket. Taking the per-pixel MAX gradient across B, G, R, a\* and b\*
+took it from 2 candidates and one lens to 7 candidates and both lenses, and
+the pair test from reject to accept.
+
+This does **not** violate the rule above, and the distinction is the point: a
+threshold picks a colour and a cut, so it is tuned at setup and drifts by
+lunchtime. Max gradient picks no colour and has no cut — "an edge in any
+channel is an edge" is equally true of all five rim colours and of a hall
+whose lights change. The ellipse is still found geometrically.
+
+**Use `find_rims_hough()`, not `find_rims()`, on a real face.** MEASURED
+2026-09-20: `findContours` cannot deliver a rim from a photograph. The outline
+is present at the right size and the right place — plainly visible in the edge
+image — but it arrives broken into arcs AND fused with the brow and hair edges
+that touch it, so no connected component is ever a ring. The best-scoring
+contour in the whole frame was the **eye**. Morphological closing is the usual
+answer and is unavailable here: a 3x3 close bridges the ~7-10 px rim gap and
+destroys the annulus outright (`close_px=3` left 0 surviving candidates where
+`close_px=0` left 3). `find_rims()` is kept for synthetic geometry and clean
+images. The working path is Hough centres, then `ring_radii()` (radial
+profile, median over 180 angles, so a gap costs a few angles and the median
+does not move), then `ring_ellipse()`.
+
+**Rank candidate pairs by SPAN RESIDUAL, never by ratio or size error.** Both
+of those are cheap for clutter to satisfy — any two roundish blobs at roughly
+the right spacing pass — so ranking by them ranks by how easy the test is to
+fake. At 450 mm a spurious background pair beat the real rims 0.122 to 0.126
+and the ladder read 353 mm against a board at 457. Span residual compares the
+depth implied by the separation against the depth implied by the radii, so it
+is a measurement the pair did not get to choose. Also gate on the geometric
+depth bound `|z_r - z_l| <= separation_mm * sin(max_yaw)`, which scales with
+distance where a fixed size fraction does not.
+
+**The annulus is a WEAKER filter than it sounds.** At 450 mm all twelve Hough
+candidates passed the 1.1364 +/- 6% ratio check, because `ring_radii` searches
+peak pairs across a +/-45% radius span and can nearly always find one. Do not
+treat "annulus formed" as evidence of a correct lock; it stayed at 100% in
+every lighting condition including the ones that produced garbage.
+
+**THE RIMS DO NOT MEASURE YAW, and this is not fixable by tuning.** MEASURED
+2026-09-20 against the board on the forehead: gain **0.198**, correlation
+**0.138**, rms error 22.9 deg — no signal, from frames whose distance is good
+to millimetres. Yaw is read as a *difference of two radii*, and at 570 mm a
+20 deg turn moves them apart by **2.2 px** while measured fit noise is
+**4.2 px**. SNR 0.53. Reaching +/-5 deg needs the pair good to 0.56 px, about
+7x better than achieved. Do not re-attempt this by filtering, seeding or
+smoothing — the information is not in the image.
+
+This *adds to* trap (c) rather than contradicting it. Eccentricity-derived yaw
+does carry a couple of degrees of systematic bias, as stated — but 2 deg of
+bias beats 19 deg of noise, and the depth-difference path trap (c) recommends
+is what failed. **Untried and worth measuring: yaw from the MEAN AXIS RATIO of
+the two rims**, which are coplanar and so should agree, averaging the per-rim
+noise down.
+
+**The rims give DISTANCE, not orientation.** Head rotation must come from the
+marker board, the face mesh, or an accepted ~2 deg eccentricity bias. The gaze
+mapping's `t_z` feature is fed by distance and is unaffected.
+
+**Rim detection needs its own exposure.** `[camera] exposure = 156, gain = 0`
+is a GAZE setting — short, so a saccade does not smear — and it left the face
+at mean 20 with the rim edges under the noise floor. Use `rim_exposure = 312`,
+`rim_gain = 192`. The trap: exposure 1250 also *reads* as well exposed (face
+mean 113) and is worse than useless, because 125 ms of integration smears the
+rim and the lens that was detected at 156 vanishes from the candidate list
+entirely. Brighter and blinder at once. **Fix darkness with gain, not time** —
+gain costs a 50 mm rim far less than it would cost an 8 px iris.
+
 **`RigSpec` must be MEASURED, not assumed.** A 1 mm error in `radius_mm` is a
 ~4% error in every distance this module reports, silently. `RigSpec.trusted`
 stays False until `measured_n >= 5`.
@@ -224,7 +296,7 @@ provide.
 
 ## Verification status — be careful here
 
-**Tested (85 passing):** `oneeuro`, `gesture`, `protocol`, `calib`, `features`,
+**Tested (158 passing):** `oneeuro`, `gesture`, `protocol`, `calib`, `features`,
 `config` identity validation.
 
 **Verified on hardware 2026-08-08:** `camera.py` (all six C920 controls survive
@@ -241,6 +313,22 @@ SIGILL cannot be caught with `try/except`. LiteRT is the primary path now, not
 the contingency.
 
 **Not yet run:** `bin/bench`, `bin/calibrate` — Gates 1b and 1c.
+
+**Verified on hardware 2026-09-20** against the marker board in the same
+frames: rim **distance** works — 100% detection and 3.7 mm error IQR at
+550 mm, 12.1 mm median IQR across a 450-700 mm ladder. The ~22 mm bias is the
+board sitting behind the lens plane, **not** a radius error: six rungs
+separate those hypotheses (constant 7.7 mm rms vs proportional 9.6 mm rms), so
+`radius_mm = 25.0` stands. **700 mm is near the working limit** — the annulus
+gap is 9.1 px at 450 and 5.9 px at 700 against a 4.0 px floor, and detection
+falls to 57%. Seat visitors at 500-650. See RESULTS.md.
+
+**Lighting: partial.** Mild backlighting (halo/face 1.21) did not hurt and in
+fact gave the best pose rate measured; the annulus never dropped below 100%.
+**The daylight/window case is NOT done** and is the one a faire will present.
+Judge lighting by the halo around the head, not the frame average, and never
+by face brightness — face spanned 91-152 while pose ranged 48-84% with no
+ordering between them.
 
 ## Board-specific gotchas
 
