@@ -1,6 +1,6 @@
 # RESTART — read this first after a crash or power loss
 
-Last updated: **2026-09-20** (late session, ran past midnight into 09-21).
+Last updated: **2026-09-21**.
 
 ## The 60-second version
 
@@ -19,8 +19,12 @@ numbers; this is the orientation.
 | distance ladder 450–700 | **DONE**, all six rungs |
 | lighting conditions | **partial** — mild backlight fine; the daylight/window case is NOT done |
 | Gate 1c bare-faced | **DONE — 3.27 deg / 5.56 p95 -> PATH B.** Repeat in good light. |
+| calibration FIT | **two bugs found and fixed** — see below. This is where the gain came from, not the glasses. |
+| the model | **linear (7 par) beats degree-2 (66 par) at every point count tried** |
+| bunny game | seats the player before calibrating; linear always; see its `GAZE.md` |
+| `DIGEST.md` | portable ~8 KB summary for claude.ai / a fresh chat. **Re-upload when findings land.** |
 
-Suite is **158 passing**, no hardware needed.
+Suite is **160 passing**, no hardware needed.
 
 ## What changed this session, and what it means
 
@@ -110,23 +114,76 @@ glazed hall could exceed 3. The sign of the effect is known, the worst case is
 not. Distance also varied 515–669 mm across those runs, which is a real
 confound since the ladder shows distance alone moves pose by tens of points.
 
+## The calibration fit — where Path B actually came from
+
+No hardware changed between Path C and Path B. Two bugs in the fit did it, and
+**neither was visible in the training error** — the worse they were, the
+better the run looked.
+
+**1. The 66-parameter model was never earning its parameters.** Scored on 26
+held-out targets, refitting stored feature vectors:
+
+| cal points | linear (7 par) | poly2 (66 par) |
+|---|---|---|
+| 9 | **3.49 deg** | 8.37 deg |
+| 25 | **3.01 deg** | 3.27 deg |
+
+Linear wins at *every* point count, including 25 where poly2 was supposed to
+have the data. `LinearMapper` uses six features — both iris x/y, yaw, pitch —
+plus a bias; dropping roll, t_x, t_y, t_z and every quadratic term costs
+nothing measurable. **9 points + linear is within half a degree of a 25-point
+fit at a third of the sitting**, which is the argument for a short grid in a
+queue.
+
+**2. `ridge="auto"` used leave-one-out CV, which under-regularises here.**
+Calibration points collected over ~112 s share a head pose and blink state, so
+LOO leaves a held-out point's own time-neighbours in training and it is
+predicted partly from itself. Measured on one real run: LOO chose 0.215 ->
+11.97 deg; **blocked 5-fold** chose 46.4 -> **2.53 deg**; oracle 2.22. Same
+data, same grid, same solver. `_cv_ridge` now uses **contiguous blocked
+folds** — they must stay contiguous in COLLECTION order, since strided folds
+reproduce the failure while looking like k-fold.
+
+**Honest notes on how that was found.** Along the way I swept ridge against
+the *validation* set and got 5.63 and 2.91 deg — those do not count, and the
+3.27 deg figure is a fresh run whose penalty came from training data alone. I
+also tried a one-standard-error rule first, broke a passing test with it, and
+reverted rather than bending the test.
+
+**`config.toml` now says `points = 25`** (was 9) and `viewing_distance_mm = 504`
+(was a stale 584, which inflated every degree figure by 16% for months).
+**Measure the viewing distance every sitting, and prefer pixels when comparing
+across sittings.**
+
+**Still to do here:** the spike still defaults to poly2 above 16 points. The
+game has already been switched to linear for any grid it will present. Making
+that change in the spike deserves its own fresh run rather than a refit, since
+every number above came from data collected for a different model.
+
 ## Still open, roughly in priority order
 
-1. ~~Bare-faced `bin/calibrate`~~ **DONE 2026-09-21: 3.27 deg / 5.56 p95.
-   This is PATH B, not Path C.** Repeat it in good light before committing
-   seven weeks of schedule — this run was at face brightness 55.4 against the
-   128.7 seen earlier the same evening, one subject, one run, and 3.27 sits
-   close to the 3.5 deg boundary. The worst single point was 15.73 deg, so
-   there is a tail the mean hides.
-2. **The window/backlit test** above. 10 minutes, needs daylight.
-3. **Yaw from mean axis ratio** — the one untried idea with a real argument
-   behind it.
-4. **`GAZE_HORIZONTAL_ONLY` for the game** — specified, never implemented, and
+1. **Repeat Gate 1c in good light.** 3 minutes, and it is what the whole
+   schedule now rests on. The 3.27 deg run was at face brightness **55.4**
+   against the **128.7** measured earlier the same evening; a dim iris is a
+   noisy iris. One subject, one run, worst single point 15.73 deg against a
+   p95 of 5.56, and 3.27 sits close to the 3.5 deg Path B/C boundary. **Do
+   this before committing seven weeks to Path B.**
+2. **Switch the spike to the linear model** and re-measure on a fresh run —
+   the comparison above is a refit of data collected for poly2.
+3. **The window/backlit test.** 10 minutes, needs daylight. `bin/lighttest
+   window 40` with a window behind the subject. The one condition a faire
+   will actually present and the only one untested.
+4. **Yaw from mean axis ratio** — the one untried idea with a real argument
+   behind it. Record the axis ratios; `bin/yawcheck` does not.
+5. **`GAZE_HORIZONTAL_ONLY` for the game** — specified, never implemented, and
    now doubtful: the vertical axis was `r_y = 0.22` in the spike but the
    2026-09-19 bare-faced run gave `r_y = 0.755` vs `r_x = 0.563`, which
    reverses it. **Re-measure before acting on either number.**
-5. Bare-face-mesh column of update.md's ladder table — never run.
-6. `config.toml [screen] viewing_distance_mm` says 584; 504 was measured.
+6. Bare-face-mesh column of update.md's ladder table — never run.
+7. Re-upload `DIGEST.md` to Drive / the claude.ai Project after any of the
+   above lands. It is a snapshot, not a link:
+   `unoq-gaze-spike-DIGEST-2026-09-21.md`, Drive id
+   `1rSTHsraQPg67hCuDUFLwDKOEwAHhPRCN`.
 
 ## Where we are right now
 
@@ -830,6 +887,13 @@ Do not "clean these up" — each one cost a measurement. The reasoning is in
 - `exposure = 156` — the C920 quantises exposure to EV stops *while streaming*.
   250 was silently running at 156 anyway.
 - `focus_absolute = 30` — peak iris sharpness, 5.4× better than the far end.
+- `[calibration] points = 25` (was 9) — 66 parameters cannot be fitted from 9
+  points; measured 8.4 deg at 9 against 2.34 at 25 on the same session. NOTE
+  this matters only while the spike still defaults to the degree-2 model; with
+  the linear model 9 points gives 3.49 deg and the long grid is not worth it.
+- `[screen] viewing_distance_mm = 504` (was a stale 584) — every angular error
+  scales with it, so 584 inflated every degree figure by 16%. **Re-measure it
+  every sitting.**
 - `[frame_rig] rim_exposure = 312`, `rim_gain = 192` — **rim detection needs
   its own exposure.** `[camera] exposure = 156, gain = 0` is a *gaze* setting
   (short, so a saccade does not smear) and left the face at mean 20 with the
@@ -868,3 +932,13 @@ Do not "clean these up" — each one cost a measurement. The reasoning is in
 - **Do not judge booth lighting by face brightness.** It does not predict
   detection: face 91–152 across runs, pose 48–84%, no ordering. Judge it by
   whether the GLASSES lamp in `bin/aim` stays green.
+- **Never judge a calibration by its training error.** The two worst-fitting
+  runs of 2026-09-21 reported 0.16 and 0.40 deg training error and 9.3 and
+  12.9 deg validation. The worse the overfit, the better it looks from inside.
+- **Do not choose the ridge by sweeping it against the validation set.** That
+  is what the held-out set exists to prevent, and it produced two
+  attractive-looking numbers (5.63, 2.91 deg) that are not accuracy. Selection
+  must use training data only.
+- **Degree-2 has never beaten linear on real data.** 7 parameters beat 66 at
+  every point count tried. Do not reach for more model before more light, more
+  points, or a better seating distance.
