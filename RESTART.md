@@ -775,6 +775,7 @@ calibration corrupts the one baseline that can only ever be recorded once.
 
 | file | what it is |
 |---|---|
+| `DIGEST.md` | **portable** ~8 KB summary for a context that cannot see this repo (claude.ai project knowledge, a fresh chat, a collaborator). Keep it in sync when a finding lands. |
 | `CLAUDE.md` | load-bearing decisions. Read before proposing changes. |
 | `PLAN.md` | the schedule, the gates, the Sunday-night fork |
 | `RESULTS.md` | every measurement, written as it arrives |
