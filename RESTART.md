@@ -189,6 +189,51 @@ this working distance. Nobody has measured the sample-to-sample noise of the
 gaze point while fixating, which is the measurement that would tell them
 apart. Do that before changing the tracker.
 
+## WHY IT IS JUMPY — the number that explains the whole project
+
+**The entire screen is about 14 px of iris movement.** At 504 mm the screen
+subtends +/-18.5 deg; an eyeball of radius 12 mm rotating that far translates
+the iris 7.6 mm, which at the 1280-wide capture is **13.8 px**. Mapping that
+onto 1920 px of screen is a **gain of 139 screen px per px of iris**.
+
+So **one pixel of iris-centre error is 2.8 deg of gaze error**, and the
+measured 3.27 deg is **1.17 px of iris noise**. The pipeline is sitting at
+roughly one pixel of landmark precision, which is near the floor of what the
+478-point model delivers in a single frame.
+
+That single number explains things that looked unrelated:
+
+- "My eyes are not moving but the cursor jumps" -- sub-pixel landmark jitter
+  multiplied by 139.
+- "Without a bright light I get nothing" -- less light is more sensor noise is
+  worse than a pixel.
+- Why better models and more calibration points plateau around 3 deg: they fit
+  the mapping better, but they cannot manufacture iris precision.
+- Why raising capture resolution did NOT help in August. The landmark model
+  crops the face and resizes to a FIXED 256x256, so iris pixels *in the
+  model's input* are set by anatomy (iris is ~8% of face width), not by the
+  camera mode. More capture pixels only reduce interpolation blur in that crop.
+
+**The three levers, in order of leverage:**
+
+1. **Average over time.** If the jitter is independent frame to frame it falls
+   as sqrt(N): 8 samples is 0.5 s and 3.27 -> 1.16 deg; 16 samples is 1 s and
+   -> 0.82 deg. A dwell UI waits that long anyway, so it is free precision
+   that the current live-cursor design throws away. **This only pays if the
+   noise is independent** -- see `bin/fixate`.
+2. **More real pixels on the iris**, via a narrower lens (Arducam M12 ~40 deg,
+   roughly 2x linear iris resolution -- `PLAN.md` Path C already says this) or
+   simply moving the camera closer. NOT via capture resolution.
+3. **IR illumination**, which is what commercial trackers do and what removes
+   the bright-light-in-the-eyes problem. Hardware project.
+
+**`bin/fixate` is the measurement that picks between 1 and 2.** Stare at one
+dot; it reports the scatter, then the sd of the mean of N consecutive samples
+against the 1/sqrt(N) ideal, plus lag-1 autocorrelation. Independent jitter
+means averaging works and nothing else is needed. Correlated drift means
+averaging buys almost nothing and the answer is pixels. The two look identical
+on screen. **Run this before changing the tracker or buying a lens.**
+
 ## Two display gotchas that cost a session
 
 **Do not reboot with the monitor asleep.** The board's own DPMS puts it to
@@ -895,6 +940,7 @@ calibration corrupts the one baseline that can only ever be recorded once.
 | `RESTART.md` | this file — session state and recovery |
 | `AUTOCAL.md` | auto-calibration design for deployment; B/C results |
 | `GLASSES.md` | glasses-rim fiducial: decision, accuracy, hardware findings |
+| `bin/fixate` | **measures WHY it is jumpy** — fixation scatter, whether averaging helps (sd of block means vs 1/sqrt(N)), lag-1 autocorrelation. Run before changing trackers or buying a lens. |
 | `bin/talker` | **T-Rex Talker 3.0 as a gaze demo** — 3x2 AAC board, gaze aims and SPACE/ENTER speaks. Reads the real `.menu` files and plays the device's own clips. Logs offset-from-cell-centre on every selection, so it is a test and not a toy. |
 | `bin/aim` | **live view on the board's monitor** — aim the camera, tune booth lighting, watch BOARD/GLASSES lock lamps. Start here at any sitting. |
 | `bin/ladder` | distance ladder with on-screen guidance; auto-captures once in tolerance AND locked |
