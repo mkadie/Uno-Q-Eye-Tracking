@@ -93,6 +93,20 @@ def load(path=None, width=None, height=None, hfov_deg=DEFAULT_HFOV_DEG,
     already rescaled to them.
     """
     path = path or os.environ.get("GAZE_INTRINSICS", "camera_intrinsics.json")
+    # Resolve a RELATIVE path against this package's directory, not the
+    # caller's cwd. MEASURED 2026-09-22: the bunny game runs from ~/bunny and
+    # imports the spike from elsewhere, so "camera_intrinsics.json" resolved
+    # to ~/bunny and was not there -- the whole faire study fell back to an
+    # ASSUMED 70.4 deg FOV. That is a proportional error in every distance,
+    # and distance is what converts the study's pixels into degrees.
+    #
+    # The same mistake as spike.config.load() defaulting to a relative
+    # "config.toml", which cost a session once already.
+    if not os.path.isabs(path) and not os.path.exists(path):
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cand = os.path.join(here, path)
+        if os.path.exists(cand):
+            path = cand
     if os.path.exists(path):
         with open(path) as f:
             d = json.load(f)
