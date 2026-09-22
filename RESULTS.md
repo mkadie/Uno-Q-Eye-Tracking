@@ -1347,3 +1347,54 @@ switched to linear for any grid it will present (see its `GAZE.md`).
 **Caveat:** one subject, one session, two grids. Linear's margin at 25 points
 (3.01 vs 3.27) is inside the run-to-run spread seen earlier tonight; its
 margin at 9 points (3.49 vs 8.37) is not.
+
+## 2026-09-21 — the PITCH feature sat on the ±π wrapping singularity
+
+Reported from the board: "it was tracking very well, it has problems if you
+tilt your head up or down after calibration."
+
+**Measured cause.** `head_pose()` extracted Euler angles straight from
+solvePnP's rotation matrix. The canonical face model faces *away* from the
+camera, so a head looking at the lens is ~180° rotated, `R[2,2] ≈ −1`, and
+`atan2(R[2,1], R[2,2])` lands on the wrap. Real 25-point calibration data:
+
+```
+-3.12 -3.12 ... -3.09  |  -1.25 -1.05 +0.82 +1.46 +2.47  |  +2.89 ... +3.13
+      14 near −π              5 scattered                     6 near +π
+```
+
+**Standard deviation 2.69 rad — 154°** — for a seated head that barely moved.
+A single sign flip is a jump of 2π in a feature the linear mapping multiplies
+by a coefficient; measured, that moved the cursor **230 px**.
+
+**Fixed** by taking Euler angles *relative* to the nominal facing-the-camera
+rotation (`_NOMINAL_T`), so they sit near zero, far from any singularity.
+Verified against synthetic poses: −20° → −20.00, 0 → 0.00, +20° → +20.00, with
+yaw and roll at zero. Four regression tests, including one that sweeps through
+level and asserts no discontinuity — the failure was never a wrong value, it
+was a **step** between two nearly identical poses.
+
+**But the wrap was NOT why head tilt breaks tracking**, and it is worth being
+clear about that rather than claiming a fix we did not make. Measured on the
+real mapping, a 10° tilt moves the cursor only **6 px**. The coefficient on
+pitch is tiny.
+
+**The actual mechanism is that nothing compensates.** Tilt the head up while
+still looking at the same point and the eyes counter-rotate down: the iris
+moves ~3.8 px in the image, and at the measured **139 screen-px per iris-px**
+gain that is **~525 px ≈ 10° of gaze error**. The head-pose features exist to
+absorb exactly this, and they cannot, because a 9-point calibration is
+collected at one head pose and has almost no pose variation to learn the
+coefficient from.
+
+**So the pitch fix is necessary but not sufficient.** What follows from it:
+
+| candidate | note |
+|---|---|
+| vary head pose *during* calibration | gives the pose coefficients something real to fit; costs sitting time |
+| detect tilt and prompt a re-calibration | cheap, and the flags for it already exist |
+| drop pose features entirely, require a still head | measured: iris-only is 4.65° vs 3.49° at 9 points, so pose IS earning its place at the same pose |
+
+Untested: whether a calibration that deliberately samples two or three head
+pitches recovers the compensation. That is the experiment the faire data may
+answer for free, since visitors will not hold still.

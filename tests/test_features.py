@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 
@@ -116,3 +117,75 @@ def test_head_pose_responds_to_yaw():
 def test_distance_is_positive_and_plausible():
     _, d = F.extract(synth_landmarks(), W, H)
     assert 50.0 < d["distance_mm"] < 5000.0
+
+
+def _project_at(pitch_deg=0.0, yaw_deg=0.0, roll_deg=0.0, z=600.0):
+    """Landmarks of the canonical model posed at a known angle."""
+    import cv2
+    from spike import features as F
+    obj = F._MODEL_3D.astype(np.float64)
+    rp, ry, rr = (math.radians(a) for a in (pitch_deg, yaw_deg, roll_deg))
+    Rx = np.array([[1, 0, 0], [0, math.cos(rp), -math.sin(rp)],
+                   [0, math.sin(rp), math.cos(rp)]])
+    Ry = np.array([[math.cos(ry), 0, math.sin(ry)], [0, 1, 0],
+                   [-math.sin(ry), 0, math.cos(ry)]])
+    Rz = np.array([[math.cos(rr), -math.sin(rr), 0],
+                   [math.sin(rr), math.cos(rr), 0], [0, 0, 1]])
+    Rn = np.array([[1., 0, 0], [0, -1., 0], [0, 0, -1.]])
+    R = Rn @ (Rz @ Ry @ Rx)
+    K = np.array([[910., 0, 640.], [0, 910., 360.], [0, 0, 1.]])
+    pts, _ = cv2.projectPoints(obj, cv2.Rodrigues(R)[0],
+                               np.array([[0.], [0.], [z]]), K, np.zeros(5))
+    return obj, pts.reshape(-1, 2), K
+
+
+def _solve_angles(obj, pts, K):
+    import cv2
+    from spike import features as F
+    ok, rvec, _ = cv2.solvePnP(obj, pts.astype(np.float64), K, np.zeros(5),
+                               flags=cv2.SOLVEPNP_ITERATIVE)
+    assert ok
+    R, _ = cv2.Rodrigues(rvec)
+    R = F._NOMINAL_T @ R
+    sy = math.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
+    return (math.degrees(math.atan2(-R[2, 0], sy)),      # yaw
+            math.degrees(math.atan2(R[2, 1], R[2, 2])),  # pitch
+            math.degrees(math.atan2(R[1, 0], R[0, 0])))  # roll
+
+
+def test_pitch_is_not_on_the_wrapping_singularity():
+    """Pitch must be near ZERO for a head facing the camera, not near +/-pi.
+
+    MEASURED 2026-09-21 on real calibration data, before this was fixed: 14
+    samples near -pi, 6 near +pi, standard deviation 2.69 rad -- 154 degrees,
+    for a seated head that barely moved. The canonical face model faces AWAY
+    from the camera, so a head looking at the lens is ~180 deg rotated,
+    R[2,2] ~ -1, and atan2(R[2,1], R[2,2]) flips sign on noise.
+
+    A single flip is a jump of 2*pi in a feature the linear gaze mapping
+    multiplies by a coefficient; measured, it threw the cursor 230 px.
+    """
+    yaw, pitch, roll = _solve_angles(*_project_at(pitch_deg=0.0))
+    assert abs(pitch) < 1.0, "pitch %.1f deg -- back on the singularity" % pitch
+    assert abs(yaw) < 1.0
+    assert abs(roll) < 1.0
+
+
+@pytest.mark.parametrize("true_pitch", [-20.0, -10.0, 10.0, 20.0])
+def test_pitch_recovers_and_stays_continuous(true_pitch):
+    """A real tilt must come back as that tilt, with the right sign."""
+    yaw, pitch, roll = _solve_angles(*_project_at(pitch_deg=true_pitch))
+    assert abs(pitch - true_pitch) < 1.0, (true_pitch, pitch)
+    assert abs(yaw) < 1.0 and abs(roll) < 1.0
+
+
+def test_pitch_has_no_jump_across_level():
+    """Sweeping through level must not produce a discontinuity.
+
+    This is the property that actually matters: the failure was not a wrong
+    value, it was a 2*pi STEP between two nearly identical poses.
+    """
+    vals = [_solve_angles(*_project_at(pitch_deg=p))[1]
+            for p in (-2.0, -1.0, 0.0, 1.0, 2.0)]
+    steps = [abs(b - a) for a, b in zip(vals, vals[1:])]
+    assert max(steps) < 3.0, "discontinuity in pitch: %r" % (vals,)

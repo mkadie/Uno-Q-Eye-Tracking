@@ -77,6 +77,15 @@ def _normalised_iris(lm, iris, out, inn, up, lo):
     return float(d[0] / w), float(d[1] / h)
 
 
+# 180 degrees about x: the canonical face model faces away from the camera, so
+# this is the rotation of a head looking straight at it. Euler angles are taken
+# relative to this, which moves pitch off the wrapping singularity -- see the
+# comment block in head_pose().
+_NOMINAL_T = np.array([[1.0, 0.0, 0.0],
+                       [0.0, -1.0, 0.0],
+                       [0.0, 0.0, -1.0]], dtype=np.float64).T
+
+
 def head_pose(lm, frame_w, frame_h, focal_px=None, intr=None):
     """solvePnP head pose. Returns (yaw, pitch, roll in rad, tvec in mm).
 
@@ -115,6 +124,25 @@ def head_pose(lm, frame_w, frame_h, focal_px=None, intr=None):
     if not ok:
         return 0.0, 0.0, 0.0, np.zeros(3)
     R, _ = cv2.Rodrigues(rvec)
+
+    # MEASURED 2026-09-21: extracting Euler angles from R DIRECTLY puts PITCH
+    # exactly on the +/-pi wrapping singularity, because the canonical face
+    # model faces AWAY from the camera. A head looking at the lens is
+    # therefore ~180 deg rotated, R[2,2] ~ -1, and atan2(R[2,1], R[2,2])
+    # returns values that flip between +3.12 and -3.12 on noise. Real
+    # calibration data shows it: 14 samples near -pi, 6 near +pi, and a
+    # standard deviation of 2.69 rad -- 154 degrees, for a seated head that
+    # barely moved.
+    #
+    # A single flip is a jump of 2*pi in a feature the linear model multiplies
+    # by a coefficient; measured, that threw the cursor 230 px.
+    #
+    # The fix is to measure rotation RELATIVE to the nominal
+    # facing-the-camera pose rather than to the model's own frame. Euler
+    # angles of the relative rotation sit near zero, far from any
+    # singularity, and a small physical tilt becomes a small number.
+    R = _NOMINAL_T @ R
+
     sy = float(np.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2))
     if sy > 1e-6:
         pitch = float(np.arctan2(R[2, 1], R[2, 2]))
