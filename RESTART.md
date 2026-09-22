@@ -260,6 +260,33 @@ exit; it is wired into `talker`, `aim`, `ladder` and `yawcheck`.
 **`pkill -f "bin/talker"` kills its own shell** when run over ssh, because the
 pattern appears in that shell's command line. Use `bin/talk[e]r`.
 
+## Maker-faire study — RUNNING, first data collected
+
+`~/bunny/run_study.sh` (detached; log `/tmp/bff.log`, data
+`~/bff_gaze_study.jsonl`). **275 rows collected 2026-09-22, not yet analysed.**
+
+    python3 ~/bunny/analyse_study.py ~/bff_gaze_study.jsonl --filter
+
+**The line to read is `ratio scatter/error`.** It decides the project's next
+move and nothing else in the file matters as much:
+
+- **> 0.7, jitter-dominated** -> averaging over a dwell cuts error by sqrt(N).
+  0.5 s takes 3.27 deg to 1.16, free, no hardware.
+- **< 0.7, bias/drift-dominated** -> averaging is a dead end and the answer is
+  more pixels on the iris: a closer camera or the ~40 deg M12 lens
+  (`PLAN.md` Path C).
+
+**Analyse the existing 275 rows SEPARATELY from anything collected after
+2026-09-22.** They were taken at a 0.85 s auto-carrot, which fires while the
+eyes are still travelling to the next bunny -- those samples are saccades, not
+fixations, and a saccade is exactly what the scatter test misreads as tracker
+noise. The beat is now 4 s. Session headers record the settings, so the runs
+can be told apart.
+
+Also expect a high blink-exclusion rate in the last rows of that batch: the
+subject was tired and said so. That is the flags working, not a fault, but it
+is not representative of a fresh visitor.
+
 ## Still open, roughly in priority order
 
 1. **Repeat Gate 1c in good light.** 3 minutes, and it is what the whole
