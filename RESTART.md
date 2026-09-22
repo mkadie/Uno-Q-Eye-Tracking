@@ -260,7 +260,29 @@ exit; it is wired into `talker`, `aim`, `ladder` and `yawcheck`.
 **`pkill -f "bin/talker"` kills its own shell** when run over ssh, because the
 pattern appears in that shell's command line. Use `bin/talk[e]r`.
 
-## Maker-faire study — RUNNING, first data collected
+## Maker-faire study — FIRST BATCH IS VOID. Read this before collecting again.
+
+**2026-09-22: 334 throws across 12 sessions recorded NOTHING.** Every row has
+`gaze: null`, `face_frac: 0.0`, flagged `no_gaze`. Kept in
+`board_artifacts/study/` for the record; **do not analyse it**.
+
+Cause: `GazeAim` stores its gaze source as `self.src`, and the study's
+per-frame hook looked for `aim.source`. It got `None` and recorded empty rows
+without complaint. Fixed, and the lookup now accepts either name.
+
+**That was the THIRD silent collection failure in one evening** — the study
+ran in mouse mode because `BFF_GAZE` was unset; the camera intrinsics resolved
+to the wrong directory; and then this. Each produced a full session of
+confident, useless rows, and none announced itself. `_study_selfcheck()` now
+runs after calibration and prints either
+
+    [study] gaze OK -- recorder sees a point at (x, y)
+
+or a loud `*** NOT RECORDING GAZE: <reason> ***`. **Check that line before
+letting anyone play.** It is the cheapest possible guard against spending a
+faire morning collecting nothing.
+
+## Maker-faire study — how to run it
 
 `~/bunny/run_study.sh` (detached; log `/tmp/bff.log`, data
 `~/bff_gaze_study.jsonl`). **275 rows collected 2026-09-22, not yet analysed.**
