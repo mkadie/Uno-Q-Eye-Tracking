@@ -311,6 +311,28 @@ is not representative of a fresh visitor.
 
 ## Thursday: the 850 nm IR test — how to decide it
 
+**The report is waiting for this result.** A pending section sits in the doc
+(Artifact `65c40e0a-88fb-41ee-8e1c-fec67ced83f2`, after Lighting) reserved for
+it. Once the A/B is run, fill that block rather than restructuring the doc.
+The report is a Claude Doc and is edited through the Docs connector, never by
+publishing files.
+
+**Protocol, so the two runs are comparable.** Anything that differs between
+them other than the lamp becomes the result:
+
+1. Same seat, same distance, same room lights, back to back.
+2. `bin/fixate --seconds 20 --label ir_off`
+3. Switch the lamp on. Change NOTHING else.
+4. `bin/fixate --seconds 20 --label ir_on`
+5. It prints the comparison and appends to `board_artifacts/fixate.jsonl`.
+6. Repeat both at least twice, alternating, so a drift in the subject over the
+   session cannot masquerade as the lamp's effect.
+
+Record the lamp's POSITION too: on-axis beside the lens gives a bright pupil
+by retroreflection, off-axis gives a dark pupil with a glint. They are
+different images and the landmark model may prefer either, so label them
+(`ir_on_axis`, `ir_off_axis`) rather than lumping them together.
+
 An 850 nm illuminator was ordered 2026-09-22 to brighten the pupils. Decide it
 with `bin/fixate`, which now labels and A/Bs:
 
