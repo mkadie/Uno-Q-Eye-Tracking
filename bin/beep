@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Audible cue through the board's USB speaker.
+
+A test that needs the person in front of the camera is useless if they miss
+the start of it -- a fixation run that began while they were looking at a
+terminal measures nothing, and the run has to be thrown away and repeated.
+
+    bin/beep            two rising tones: "get ready"
+    bin/beep --go       one long tone: "starting now"
+    bin/beep --done     two falling tones: "finished"
+"""
+import sys
+import time
+
+import numpy as np
+
+
+def tone(mixer, freq, dur, vol=0.35):
+    sr = 44100
+    t = np.linspace(0, dur, int(sr * dur), endpoint=False)
+    # Fade the ends or it clicks, and a click is harder to place than a tone.
+    env = np.minimum(1.0, np.minimum(t / 0.02, (dur - t) / 0.02))
+    w = (vol * env * np.sin(2 * np.pi * freq * t) * 32767).astype(np.int16)
+    return mixer.Sound(np.column_stack([w, w]).copy())
+
+
+def main():
+    try:
+        import pygame
+        pygame.mixer.pre_init(44100, -16, 2)
+        pygame.mixer.init()
+    except Exception as e:
+        print("\a", end="", flush=True)      # terminal bell, better than nothing
+        print("[beep] no audio (%s)" % e)
+        return
+
+    if "--go" in sys.argv:
+        seq = [(880, 0.45)]
+    elif "--done" in sys.argv:
+        seq = [(880, 0.12), (587, 0.20)]
+    else:
+        seq = [(587, 0.12), (880, 0.16)]
+    for f, d in seq:
+        tone(pygame.mixer, f, d).play()
+        time.sleep(d + 0.06)
+    time.sleep(0.2)
+
+
+if __name__ == "__main__":
+    main()

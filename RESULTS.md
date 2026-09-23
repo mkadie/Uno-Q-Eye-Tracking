@@ -1445,3 +1445,62 @@ calibration and redo it rather than collecting a session on top of one.
 (the previous round had one at −509.5 mm), the self-check printed `gaze OK`
 before collection, and 93% of throws passed the automatic distraction flags
 with no operator input.
+
+## 2026-09-23 — the red/IR lamp: +96% iris contrast, and gain is a saturated meter
+
+The lamp is **16 red LEDs plus one 850 nm IR LED** — a red illuminator, not an
+IR array. That matters: red at ~625 nm passes the C920's IR-cut filter freely,
+so the filter concern raised for a pure-IR lamp mostly does not apply.
+
+Four conditions, 8 s each, same subject and seat, `bin/irprobe`:
+
+| condition | face mean | **iris contrast** | R/G | detection |
+|---|---|---|---|---|
+| dark, no lamp | 10.0 | 1.71 | 0.36 | 100% |
+| room lights only | 34.2 | 7.70 | 0.42 | 100% |
+| dark + lamp | 34.9 | 10.53 | 1.23 | 100% |
+| **room + lamp** | **56.3** | **15.11** | 1.09 | 100% |
+
+**The lamp nearly doubles iris contrast on top of room lighting** (7.70 →
+15.11, +96%), and it is not merely adding photons: at essentially matched face
+brightness (34.9 vs 34.2) it still beats room light by **+37%** on contrast.
+That is the mechanism red light should have — it scatters less in the iris,
+flattening texture and sharpening the pupil boundary.
+
+**Detection was 100% in every condition, including face mean 10.0.** Face
+detection is not the discriminator at this range and should not be used as one.
+
+### Gain is a light meter only BELOW its ceiling
+
+`gain` read **109 in all four conditions** while face brightness varied 5.6×
+and iris contrast 8.8×. It is pinned at its maximum and has no headroom to
+show a difference. Reading "gain unchanged" as "the lamp did nothing" would
+have discarded a lamp that was plainly working — `bin/irprobe` now detects
+saturation and says so rather than offering that interpretation.
+
+This sits beside the earlier finding that face brightness does not predict rim
+detection. Both are cases of a convenient proxy being trusted past its range.
+
+### What this does NOT establish
+
+**Iris contrast is a proxy, not the result.** Whether a 96% contrast gain
+improves *gaze accuracy* is unmeasured. The obvious test — `bin/fixate` with
+the lamp on and off — **cannot currently resolve it**: two runs of the SAME
+condition gave 153.8 px and 276.9 px, an 80% spread. Any single on-vs-off
+comparison would report a confident number in whichever direction the noise
+fell.
+
+To measure the accuracy effect, the fixation protocol needs fixing first:
+several short fixations rather than one 15 s hold (lag-1 autocorrelation of
+0.6–0.74 suggests the subject's own drift dominates a long hold), alternating
+conditions, and enough repeats to compare distributions rather than points.
+
+**Also: the room was dim throughout.** Room lights alone put the face at 34.2
+where the same condition measured 128.7 four days earlier, and gain was
+saturated in all four readings. Every comparison here is between dim
+conditions, which is where a lamp has the most room to help. Whether it still
+helps in a well-lit hall is not answered by this data.
+
+**Unrelated confound found and fixed:** the CPU governor was `schedutil`, not
+`performance`, which had the pipeline at 7.8 Hz against a camera capable of
+19.4. Any timing measured before that fix is void.

@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Does the IR lamp put usable light on the sensor? 10 s, no fixation needed.
+
+The fixation A/B cannot answer this: two runs of the SAME condition differed
+by 80% (154 px vs 277 px), so a single on-vs-off comparison would report a
+confident number in whichever direction the noise fell.
+
+This measures something far more stable instead:
+
+  GAIN    the C920 raises its own gain when light is low. It is this project's
+          documented light meter. If the lamp adds usable light, gain FALLS.
+  R/G     a Bayer sensor's red filter passes near-IR best, so 850 nm arriving
+          at the sensor shows up as a red-dominant cast. R/G > 1 means some is
+          getting through the IR-cut filter; how MUCH is the gain's answer.
+  IRIS    contrast across the iris edge, which is what the landmark model
+          localises -- and the only reason any of this matters.
+
+    bin/irprobe --label ir_on
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import cv2
+import numpy as np
+
+from spike import backends, camera, config, features
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--label", required=True)
+    ap.add_argument("--seconds", type=float, default=8.0)
+    args = ap.parse_args()
+
+    cfg = config.load(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "config.toml"))
+    c = cfg["camera"]
+    be = backends.create(prefer=cfg["inference"]["backend"])
+    cam = camera.Camera(c["device"], c["width"], c["height"], c["fps"],
+                        c["fourcc"], c["exposure"], c["focus"], c["gain"]).open()
+    for _ in range(15):
+        cam.read()
+
+    size = cfg["inference"]["input_size"]
+    frames, faces, iris_c, face_mean = 0, 0, [], []
+    chans = []
+    t0 = time.perf_counter()
+    last = None
+    while time.perf_counter() - t0 < args.seconds:
+        f = cam.read()
+        if f is None:
+            continue
+        frames += 1
+        last = f
+        chans.append((f[:, :, 2].mean(), f[:, :, 1].mean(), f[:, :, 0].mean()))
+        g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+        h, w = f.shape[:2]
+        s = float(size) / max(h, w)
+        small = (cv2.resize(f, (int(w * s), int(h * s)),
+                            interpolation=cv2.INTER_AREA) if s < 1 else f)
+        r = be.detect(cv2.cvtColor(small, cv2.COLOR_BGR2RGB),
+                      full=None if s >= 1 else cv2.cvtColor(f, cv2.COLOR_BGR2RGB))
+        if not r.ok:
+            continue
+        faces += 1
+        lm = np.asarray(r.landmarks)
+        xs, ys = lm[:, 0] * w, lm[:, 1] * h
+        face_mean.append(g[int(max(0, ys.min())):int(min(h, ys.max())),
+                           int(max(0, xs.min())):int(min(w, xs.max()))].mean())
+        # Iris edge contrast: spread of grey levels in a small box on each iris.
+        for idx in (features.L_IRIS, features.R_IRIS):
+            cx, cy = int(lm[idx][0] * w), int(lm[idx][1] * h)
+            box = g[max(0, cy - 12):cy + 12, max(0, cx - 12):cx + 12]
+            if box.size > 40:
+                iris_c.append(float(box.std()))
+    cam.close()
+    be.close()
+
+    gain = subprocess.run(["v4l2-ctl", "-d", c["device"], "--get-ctrl", "gain"],
+                          capture_output=True, text=True).stdout.strip()
+    gain_v = int(gain.split(":")[-1]) if ":" in gain else None
+    R, G, B = (float(np.mean([x[i] for x in chans])) for i in range(3))
+    res = dict(label=args.label, frames=frames,
+               face_rate=round(100.0 * faces / max(frames, 1), 1),
+               gain=gain_v, R=round(R, 1), G=round(G, 1), B=round(B, 1),
+               r_over_g=round(R / max(G, 1e-6), 3),
+               face_mean=round(float(np.mean(face_mean)), 1) if face_mean else None,
+               iris_contrast=round(float(np.mean(iris_c)), 2) if iris_c else None,
+               when=time.strftime("%H:%M:%S"))
+    print("%-10s gain %-4s  R/G %.2f  (R %.1f G %.1f B %.1f)  face %s  iris-contrast %s  detect %.0f%%"
+          % (res["label"], res["gain"], res["r_over_g"], R, G, B,
+             res["face_mean"], res["iris_contrast"], res["face_rate"]))
+    out = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "board_artifacts", "irprobe.jsonl")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "a") as fh:
+        fh.write(json.dumps(res) + "\n")
+
+    prev = [json.loads(l) for l in open(out)]
+    others = [p for p in prev[:-1] if p["label"] != args.label]
+    if others:
+        o = others[-1]
+        print("\nA/B against %r:" % o["label"])
+        for k, better in (("gain", "lower"), ("face_mean", "higher"),
+                          ("iris_contrast", "higher"), ("r_over_g", "higher")):
+            a, b = o.get(k), res.get(k)
+            if a is None or b is None:
+                continue
+            d = 100.0 * (b - a) / max(abs(a), 1e-6)
+            print("  %-14s %8s -> %8s  %+6.0f%%  (%s is better)" % (k, a, b, d, better))
+        # MEASURED 2026-09-23: gain read 109 in BOTH conditions while face
+        # brightness tripled and iris contrast went up 6x. Gain is a light
+        # meter only BELOW its ceiling; pinned at maximum it has no headroom
+        # to show a difference, and reading "no change" as "the lamp did
+        # nothing" would have thrown away a lamp that was plainly working.
+        if o.get("gain") == res.get("gain") and (res.get("gain") or 0) >= 100:
+            print("\n  GAIN IS SATURATED (%s in both) -- it is pinned at its"
+                  % res.get("gain"))
+            print("  ceiling and cannot show a difference. Ignore it here and")
+            print("  read FACE_MEAN and IRIS_CONTRAST instead.")
+        else:
+            print("\n  GAIN falling means the lamp put usable light on the")
+            print("  sensor. Unchanged gain BELOW the ceiling means it did not.")
+        print("\n  IRIS_CONTRAST is the one that matters: it is the edge the")
+        print("  landmark model localises, and the only reason light matters.")
+
+
+if __name__ == "__main__":
+    main()
