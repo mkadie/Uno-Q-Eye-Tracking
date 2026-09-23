@@ -46,8 +46,41 @@ CTL=/tmp/hil-%r@%h:%p
 SSHOPTS=(-o ControlMaster=auto -o "ControlPath=$CTL" -o ControlPersist=120
          -o ConnectTimeout=8 -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
 
+# The board takes a DHCP lease from this host's shared connection, so its
+# address CHANGES between boots -- it was .250 for weeks and came back as .119.
+# MEASURED 2026-09-22: that cost a session's start with "No route to host",
+# which reads exactly like a board that failed to boot.
+#
+# So if the configured address does not answer, look for it. This is the same
+# lesson as the camera's by-id path and the audio sink's name: identify the
+# DEVICE, not the number it happened to get.
+find_board(){
+  # Anything on the link that answers SSH as our user and calls itself uno-q.
+  local ip
+  for ip in $(ip neigh 2>/dev/null | awk '/REACHABLE|STALE|DELAY/ {print $1}' \
+              | grep -E '^10\.42\.0\.' | grep -v "^$BOARD_HOST$"); do
+    if [ "$(ssh -o ConnectTimeout=3 -o BatchMode=yes \
+            -o StrictHostKeyChecking=accept-new \
+            "$BOARD_USER@$ip" hostname 2>/dev/null)" = "uno-q" ]; then
+      echo "$ip"; return 0
+    fi
+  done
+  return 1
+}
+
 need_target(){
   [ -n "$BOARD_USER" ] || die "no BOARD_USER. Run: ./hil init <user> [host]"
+  if [ -z "${HIL_NO_DISCOVER:-}" ] \
+     && ! ping -c1 -W1 "$BOARD_HOST" >/dev/null 2>&1; then
+    local found
+    if found=$(find_board); then
+      printf 'hil: %s is not answering; found uno-q at %s\n' \
+             "$BOARD_HOST" "$found" >&2
+      BOARD_HOST="$found"
+      printf 'BOARD_USER=%s\nBOARD_HOST=%s\n' "$BOARD_USER" "$found" > "$ENVFILE"
+      printf 'hil: updated %s\n' "$ENVFILE" >&2
+    fi
+  fi
   TARGET="$BOARD_USER@$BOARD_HOST"
 }
 
