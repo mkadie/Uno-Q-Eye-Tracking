@@ -1398,3 +1398,50 @@ coefficient from.
 Untested: whether a calibration that deliberately samples two or three head
 pitches recovers the compensation. That is the experiment the faire data may
 answer for free, since visitors will not hold still.
+
+## 2026-09-22 — first real gaze-study data (bunny game, fire-on-target)
+
+40 throws, 37 valid, one adult subject, calibrated at 529 mm, 9-point grid.
+
+| | value |
+|---|---|
+| error | p50 5.40°, p95 8.37° — **TRUNCATED, not accuracy** |
+| throws outside the 90 px capture radius | **0 of 37** |
+| **time to acquire** | p25 5.5 s, **p50 11.3 s**, p75 16.8 s, p95 26.1 s |
+| fastest / slowest | 0.3 s / 28.0 s |
+| calibration bias | 10.2, −0.8 px (≈0.8°) |
+| seating drift during the round | 70 mm |
+
+**The error figures are unusable and the run proves it.** Fire-on-target only
+throws once the gaze is within 90 px, and **zero of 37 throws exceeded that** —
+p95 of 8.37° sits against the 9° ceiling. The distribution was cut, not
+measured. Use `BFF_STUDY_FIRE=dwell` when accuracy is the question.
+
+**The usable number is 11.3 s to acquire — about 5 selections per minute**,
+with an enormous spread (0.3–28 s).
+
+**That is pessimistic for the actual application, by a lot.** A bunny is a
+~64 px target that MOVES. A talker AAC cell is 640 × 540 px and stationary.
+This measures gaze selection under close to the hardest conditions available,
+so it is a floor rather than a ceiling — the same number on the 3×2 board is
+the one that would decide the design.
+
+**What the 11.3 s is made of**, and which lever is worth pulling:
+
+| lever | effect | cost |
+|---|---|---|
+| bigger capture radius | fires sooner | truncates the error further |
+| shorter hold (0.25 s) | fires sooner | a saccade crossing a bunny triggers it |
+| better accuracy | fewer excursions outside the window | the real fix, and the hard one |
+| **stationary, larger targets** | **the window stops moving** | none — it is what the product is |
+
+**Calibration quality moves the result more than expected.** The previous
+round's bias was 32.8, −23.3 px and it scored p50 8.99°; this round's was
+10.2, −0.8 px at p50 5.40°. Same pipeline, same subject, 20 minutes apart.
+Whatever the faire protocol ends up being, it needs to detect a bad
+calibration and redo it rather than collecting a session on top of one.
+
+**Also validated this run:** the bad-distance guard caught 0 failed solves
+(the previous round had one at −509.5 mm), the self-check printed `gaze OK`
+before collection, and 93% of throws passed the automatic distraction flags
+with no operator input.
