@@ -309,6 +309,41 @@ Also expect a high blink-exclusion rate in the last rows of that batch: the
 subject was tired and said so. That is the flags working, not a fault, but it
 is not representative of a fresh visitor.
 
+## Thursday: the 850 nm IR test — how to decide it
+
+An 850 nm illuminator was ordered 2026-09-22 to brighten the pupils. Decide it
+with `bin/fixate`, which now labels and A/Bs:
+
+    bin/fixate --seconds 20 --label ir_off
+    bin/fixate --seconds 20 --label ir_on
+
+It appends to `board_artifacts/fixate.jsonl` and prints the comparison
+immediately. **The number that decides it is FIXATION SCATTER, not
+brightness** — the rim work already established that face brightness does not
+predict detection (face spanned 91–152 while pose ranged 48–84% with no
+ordering), and the same trap applies here. A brighter picture that does not
+steady the gaze point has bought nothing.
+
+**Two risks worth knowing before the light arrives**, both of which would show
+up as "no change" rather than as an error:
+
+1. **The C920 has an IR-cut filter**, designed to block exactly this
+   wavelength. Some 850 nm leaks through — that is why IR LEDs look faintly
+   red on a webcam — but expect far less illumination than the lamp's rating
+   suggests. If Thursday shows almost no change in image brightness, that is
+   the filter and not the lamp, and the fix is a camera without one (a NoIR
+   module), not a brighter LED.
+2. **This pipeline does not use pupils.** Commercial trackers do bright-pupil
+   and corneal-glint tracking with dedicated algorithms. We use MediaPipe's
+   face-mesh iris landmarks, trained on VISIBLE-LIGHT faces. Under heavy IR
+   the image washes out and irises look pale, which could make those
+   landmarks worse rather than better. Genuinely uncertain, which is why it is
+   worth measuring rather than assuming in either direction.
+
+Placement matters if it does work: **on-axis** (beside the lens) gives a
+bright pupil by retroreflection, **off-axis** gives a dark pupil with a glint.
+Try both; they are different images and the landmark model may prefer either.
+
 ## Still open, roughly in priority order
 
 1. **Repeat Gate 1c in good light.** 3 minutes, and it is what the whole

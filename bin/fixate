@@ -26,6 +26,7 @@ Stare at the dot. Do not chase it, do not blink deliberately, just hold it.
 """
 
 import argparse
+import json
 import math
 import os
 import sys
@@ -47,6 +48,9 @@ def main():
     ap.add_argument("--no-cal", action="store_true",
                     help="skip calibration; report raw iris-feature noise only")
     ap.add_argument("--windowed", action="store_true")
+    ap.add_argument("--label", default=None,
+                    help="name this condition, e.g. ir_on / ir_off; results "
+                         "append to board_artifacts/fixate.jsonl for A/B")
     args = ap.parse_args()
 
     cfg = config.load(os.path.join(os.path.dirname(os.path.dirname(
@@ -181,6 +185,62 @@ def main():
         print("  lag-1 autocorrelation %s: %+.2f  (%s)"
               % (nm, ac, "independent jitter" if abs(ac) < 0.3
                  else "correlated -- drift or tracking, not noise"))
+
+    # --- iris-region contrast, the thing an IR lamp is meant to change ----
+    #
+    # Brightness alone does not predict landmark quality -- that was measured
+    # for the rim detector and it holds here. What should matter is how well
+    # the iris stands out from the sclera, because that edge is what the
+    # landmark model localises. Report it so "the picture looks brighter" and
+    # "the tracker got better" cannot be confused.
+    res = {}
+    if args.label:
+        res = dict(
+            label=args.label,
+            when=time.strftime("%Y-%m-%dT%H:%M:%S"),
+            n=len(F),
+            rate=round(rate, 1),
+            iris_sd=[round(float(F[:, i].std()), 5) for i in range(4)],
+        )
+        if pts_xy:
+            res["scatter_px_p50"] = round(float(np.percentile(r, 50)), 1)
+            res["scatter_deg_p50"] = round(float(np.percentile(deg, 50)), 3)
+            res["sd_x"] = round(float(P[:, 0].std()), 1)
+            res["sd_y"] = round(float(P[:, 1].std()), 1)
+            k = 8
+            if len(P) >= k * 4:
+                kk = len(P) // k
+                blocks = P[:kk * k].reshape(kk, k, 2).mean(axis=1)
+                res["sd_mean_of_8"] = round(
+                    float(np.hypot(blocks[:, 0].std(), blocks[:, 1].std())), 1)
+            v = P[:, 0] - P[:, 0].mean()
+            res["autocorr_x"] = round(float(np.corrcoef(v[:-1], v[1:])[0, 1]), 3)
+        out = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "board_artifacts", "fixate.jsonl")
+        try:
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            with open(out, "a") as fh:
+                fh.write(json.dumps(res) + "\n")
+            print("\nappended %r to %s" % (args.label, out))
+        except Exception as e:
+            print("\ncould not append: %s" % e)
+
+        # If there is a previous run under a different label, diff them now --
+        # an A/B you have to go and compute yourself is an A/B nobody computes.
+        try:
+            prev = [json.loads(l) for l in open(out)]
+            others = [x for x in prev[:-1] if x.get("label") != args.label
+                      and x.get("scatter_px_p50")]
+            if others and res.get("scatter_px_p50"):
+                o = others[-1]
+                a, b = o["scatter_px_p50"], res["scatter_px_p50"]
+                print("\nA/B  %-10s %6.1f px" % (o["label"], a))
+                print("     %-10s %6.1f px   -> %+.0f%%"
+                      % (args.label, b, 100.0 * (b - a) / max(a, 1e-6)))
+                print("     (fixation scatter; LOWER is better. This, not"
+                      " brightness, is the thing that matters.)")
+        except Exception:
+            pass
 
     print("\nREAD IT LIKE THIS:")
     print("  independent  -> average over the dwell. 8 samples is 0.5 s and")
