@@ -296,7 +296,7 @@ provide.
 
 ## Verification status — be careful here
 
-**Tested (158 passing):** `oneeuro`, `gesture`, `protocol`, `calib`, `features`,
+**Tested (174 passing):** `oneeuro`, `gesture`, `protocol`, `calib`, `features`,
 `config` identity validation.
 
 **Verified on hardware 2026-08-08:** `camera.py` (all six C920 controls survive
@@ -393,10 +393,75 @@ Judge lighting by the halo around the head, not the frame average, and never
 by face brightness — face spanned 91-152 while pose ranged 48-84% with no
 ordering between them.
 
+**USE THE RED LAMP. MEASURED 2026-09-23: it makes the gaze point 3.2x
+steadier.** Four runs alternating on/off/on/off: 267.5 px (5.35 deg) without,
+**82.5 px (1.65 deg)** with, difference +183.7 px with a 95% CI of
+[+105, +243] that excludes zero. Run 3 (lamp on, LATER in the session) matched
+run 1, so the effect tracks the lamp and not fatigue. Reproduced independently
+in the bunny game: fixation scatter -44%, time to acquire -23%.
+
+The lamp is 16 red LEDs plus one 850 nm IR LED. **Red at ~625 nm passes the
+C920's IR-cut filter freely**, so the filter objection that applies to a pure
+IR lamp does not apply here.
+
+**But the ACCURACY benefit is unproven** -- offset-from-target overlapped
+between conditions (235.8, 303.0 with vs 551.4, 297.0 without), because
+accuracy is dominated by calibration quality, which varies more between
+sittings than the lamp varies it. The claim is narrow: **steadier, yes; more
+accurate, unknown.** Steadiness is what dwell selection consumes.
+
+**`iris_contrast` from `bin/irprobe` is the metric that predicts this**, not
+brightness: room light alone gave 7.70, room+lamp 15.11.
+
+**GAIN IS A LIGHT METER ONLY BELOW ITS CEILING.** It read 109 in all four
+lighting conditions while face brightness varied 5.6x and iris contrast 8.8x
+-- pinned at maximum with no headroom. Reading "gain unchanged" as "the lamp
+did nothing" would have discarded a lamp that was plainly working. This is the
+second time a convenient proxy was trusted past its range; face brightness
+failing to predict rim detection was the first.
+
+**Measure fixation steadiness with MANY SHORT fixations, never one long
+hold.** MEASURED 2026-09-23: the old `bin/fixate` showed one dot for 15 s and
+reported scatter about its single mean. Two runs of the SAME condition gave
+153.8 and 276.9 px -- an 80% spread -- because the subject's own ocular drift
+over a long hold was being counted as tracker noise (lag-1 autocorrelation
+0.60-0.74). On synthetic data with a known answer of 42 px the old statistic
+reported 169; the rebuilt one reports 41.
+
+The rebuilt protocol: ~20 fixations of ~1.5 s at varying screen positions,
+the first 0.6 s of each discarded as saccade and overshoot, scatter measured
+about EACH fixation's own mean, a bootstrap CI on the median, and the A/B
+bootstraps the DIFFERENCE rather than printing two CIs and inviting a
+comparison by eye. **Alternate conditions and repeat each at least twice** --
+one run per condition cannot separate a lamp's effect from the subject tiring.
+
+It also separates two things the old version conflated: per-fixation SCATTER
+(steadiness, which light improves) from OFFSET to the dot (accuracy, which
+calibration improves).
+
 ## Board-specific gotchas
 
-- CPU governor defaults to `powersave` on some images. Set `performance` before
-  benchmarking or your fps numbers are meaningless.
+- CPU governor defaults to `powersave` on some images, and **reverts to
+  `schedutil` on every reboot**. Set `performance` before ANY timing, not just
+  benchmarking: MEASURED 2026-09-23, the full pipeline ran at 7.8 Hz on
+  `schedutil` against a camera managing 19.4 fps alone. Timing measured before
+  setting it is void.
+- **The board's IP changes between boots.** It held 10.42.0.250 for weeks and
+  came back as 10.42.0.119, which presents as `No route to host` -- identical
+  to a board that failed to boot. `hil` now pings the configured address and,
+  if silent, asks every reachable host on the link for its hostname until one
+  answers `uno-q`, then rewrites `.hil.env`.
+- **The USB speaker's own PCM volume resets to 0% on re-enumeration**, while
+  PipeWire still reports its sink at 54%: routed correctly, completely silent.
+  The kernel says why -- `Unlikely big volume range (=4096)`, so the device
+  misreports its curve and the percentage never reaches it. Address the card
+  by NAME (`amixer -c P10S`), never by number: P10S was card 1 one night and
+  card 0 the next, swapping with the C920's own microphone.
+- **A display that comes up generic at 1024x768 with no EDID** means the
+  ANX7625 DisplayPort bridge failed its AUX handshake (`dmesg | grep
+  anx7625`). **A warm reboot does not clear it and neither does re-plugging
+  the cable** -- only a true power cycle does. MEASURED: 215 AUX failures
+  starting 5.4 s after boot, zero after a cold start.
 - Stop Arduino App Lab before benchmarking — it competes for RAM and CPU.
 - Root partition is 10 GB regardless of variant. `df -h /` before big installs.
 - The board requests 5V @ 3A. Undervoltage shows up as random instability that

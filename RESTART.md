@@ -19,12 +19,15 @@ numbers; this is the orientation.
 | distance ladder 450–700 | **DONE**, all six rungs |
 | lighting conditions | **partial** — mild backlight fine; the daylight/window case is NOT done |
 | Gate 1c bare-faced | **DONE — 3.27 deg / 5.56 p95 -> PATH B.** Repeat in good light. |
+| red lamp | **WORKS — 3.2x steadier, CI excludes zero, reproduced in the game. USE IT.** |
+| fixation protocol | **REBUILT** — the old one measured the subject's drift, not the tracker |
+| faire kiosk | `bin/menu` + `tools/setup_kiosk.sh` built, **NOT hardware-tested** |
 | calibration FIT | **two bugs found and fixed** — see below. This is where the gain came from, not the glasses. |
 | the model | **linear (7 par) beats degree-2 (66 par) at every point count tried** |
 | bunny game | seats the player before calibrating; linear always; see its `GAZE.md` |
 | `DIGEST.md` | portable ~8 KB summary for claude.ai / a fresh chat. **Re-upload when findings land.** |
 
-Suite is **160 passing**, no hardware needed.
+Suite is **174 passing**, no hardware needed.
 
 ## What changed this session, and what it means
 

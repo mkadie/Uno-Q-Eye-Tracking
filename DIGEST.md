@@ -6,7 +6,7 @@ project knowledge, a fresh chat, a collaborator). Everything here is
 RESULTS.md, RESTART.md, GLASSES.md, PLAN.md — stay in the repo; this is the
 subset that travels.
 
-Last updated **2026-09-21**.
+Last updated **2026-09-23**.
 
 ## The project in five lines
 
@@ -159,6 +159,69 @@ Camera intrinsics are calibrated (RMS 0.306 px, fx/fy agree to 0.2%). Every
 distance is `f × size / pixels`, so an error in `f` is proportional error in
 everything — larger than the difference between any two fiducial designs.
 
+## Supplementary red light: 3.2× steadier gaze
+
+**MEASURED 2026-09-23**, four runs alternating on/off/on/off so that a drift in
+the subject cannot be mistaken for an effect of the lamp:
+
+| condition | pooled median | 95% CI |
+|---|---|---|
+| lamp on | **82.5 px (1.65°)** | [69.9, 99.4] |
+| lamp off | 267.5 px (5.35°) | [191.4, 322.4] |
+| difference | **+183.7 px** | [+105.0, +242.8] |
+
+Run 3 (lamp on, *later* in the session) matched run 1, so the effect tracks
+the lamp and not fatigue. **Reproduced independently in the game** — a
+different instrument on a different night: fixation scatter −44%, time to
+acquire −23%, valid throws 93% → 97%.
+
+The lamp is 16 red LEDs plus one 850 nm IR LED. **Red at ~625 nm passes the
+webcam's IR-cut filter freely**, so the filter objection that kills a pure-IR
+lamp on a consumer webcam does not apply.
+
+**A second finding sits in the spread.** The two lamp-on runs differ by 5%;
+the two lamp-off runs by **86%**. Without the lamp the tracker is not merely
+worse, it is *unpredictable* — the more damaging property for a public demo.
+
+**The accuracy benefit is unproven.** Offset-from-target overlapped between
+conditions. Accuracy is dominated by calibration quality, which varies more
+between sittings than the lamp varies it. The claim is narrow: **steadier,
+yes; more accurate, unknown.**
+
+## Measuring steadiness: many short fixations, never one long hold
+
+The first protocol showed one dot for 15 s and reported scatter about its
+single mean. Two runs of the SAME condition gave 153.8 and 276.9 px — an 80%
+spread — because the subject's own ocular drift was being counted as tracker
+noise (lag-1 autocorrelation 0.60–0.74). Nobody holds a fixation for 15 s.
+
+On synthetic data with a known answer of 42 px, the old statistic reported
+**169**; the rebuilt one reports **41**.
+
+The fix: ~20 fixations of ~1.5 s at varying screen positions, the first 0.6 s
+of each discarded as saccade and overshoot, **scatter measured about each
+fixation's own mean**, a bootstrap CI on the median, and an A/B that
+bootstraps the **difference** rather than printing two intervals and inviting
+a comparison by eye. Alternate conditions; repeat each at least twice.
+
+It also separates two things the first version conflated: **scatter**
+(steadiness, which light improves) from **offset** (accuracy, which
+calibration improves).
+
+## Proxies trusted past their range — twice
+
+Both cost real time, and both look like success:
+
+- **Camera `gain` is a light meter only below its ceiling.** It read 109 in
+  all four lighting conditions while face brightness varied 5.6× and iris
+  contrast 8.8×. Reading "gain unchanged" as "the lamp did nothing" would have
+  discarded a lamp that was plainly working.
+- **Face brightness does not predict detection.** Face mean spanned 91–152
+  while rim pose ranged 48–84% with no ordering between them.
+
+The metric that does predict it is **iris contrast** — the edge the landmark
+model actually localises. Room light alone 7.70, room plus lamp 15.11.
+
 ## Demos
 
 **Bunny Feeding Frenzy** — gaze-aimed arcade game, ~3.5 deg with a 9-point
@@ -186,6 +249,16 @@ fixes. Do it before changing trackers.
    19° of noise.
 4. Make linear the spike's default too (the game already switched); it needs
    its own fresh run rather than a refit.
-5. Measure fixation noise (above) before evaluating any alternative tracker.
-6. `bin/talker` hardcodes the screen size from config; it should read the
+5. ~~Measure fixation noise~~ **DONE** — and it needed the protocol rebuilt
+   first. Per-fixation scatter is now 1.65 deg with the lamp. The
+   jitter-vs-drift question is partly answered: within a fixation the signal
+   is usable, and the slow component that dominated the old measurement was
+   the subject, not the tracker.
+6. **Chase the 7.2 Hz.** The full pipeline ran at less than half the
+   documented 18-25 fps all evening even on the `performance` governor, with
+   the camera alone managing 19.4. Unexplained, and it makes every
+   measurement noisier than it needs to be.
+7. `bin/talker` hardcodes the screen size from config; it should read the
    actual display, so a board that comes up at 1024x768 is not drawn broken.
+8. Repeat the 3.27 deg accuracy run in good light. The schedule still rests on
+   one dim-light run sitting 0.23 deg inside a decision boundary.
