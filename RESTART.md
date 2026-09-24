@@ -1,6 +1,6 @@
 # RESTART — read this first after a crash or power loss
 
-Last updated: **2026-09-21**.
+Last updated: **2026-09-23** — hardware packed up after this session.
 
 ## The 60-second version
 
@@ -308,6 +308,52 @@ can be told apart.
 Also expect a high blink-exclusion rate in the last rows of that batch: the
 subject was tired and said so. That is the flags working, not a fault, but it
 is not representative of a fresh visitor.
+
+## The lamp WORKS — measured 2026-09-23, two instruments agree
+
+It is **16 red LEDs plus one 850 nm IR LED** — a red illuminator, so the
+IR-cut-filter objection mostly does not apply. Red passes it freely.
+
+**Controlled A/B, four runs alternating on/off/on/off:**
+
+| condition | runs (px) | pooled | 95% CI |
+|---|---|---|---|
+| lamp on | 83.4, 79.3 | **82.5 px (1.65°)** | [69.9, 99.4] |
+| lamp off | 170.6, 317.9 | 267.5 px (5.35°) | [191.4, 322.4] |
+| difference | | **+183.7 px** | [+105.0, +242.8] |
+
+**3.2× steadier.** Run 3 (lamp on, LATER in the session) matched run 1, so the
+effect tracks the lamp and not fatigue. `lamp_on` repeats agree to 5%;
+`lamp_off` repeats differ by 86% — without the lamp the tracker is not just
+worse, it is *unpredictable*.
+
+**Reproduced in the game, a different instrument:** fixation scatter 26.7 →
+15.0 px (−44%), time to acquire 11.3 → 8.7 s (−23%), valid throws 93% → 97%.
+
+**What is NOT established: accuracy.** Offset-from-target overlapped
+(235.8, 303.0 with vs 551.4, 297.0 without). Accuracy is dominated by
+calibration quality, which varies more between sittings than the lamp varies
+it. The claim is narrow: **steadier, yes; more accurate, unproven.**
+Steadiness is what dwell selection consumes, so it is the useful half.
+
+**USE THE LAMP AT THE FAIRE.** Also: `iris_contrast` (`bin/irprobe`) is the
+metric that predicts this, not brightness — room light alone gave 7.70 where
+room+lamp gave 15.11.
+
+## How to run the A/B again (Thursday/Friday)
+
+    bin/fixate --label lamp_on      # ~75 s: 9 cal dots + 20 fixations
+    bin/fixate --label lamp_off
+    ... ALTERNATE, at least twice each ...
+
+It beeps before and after (`bin/beep`), bootstraps the DIFFERENCE, and prints
+`REAL` or `NOT RESOLVED`. **Alternating is not optional** — a single on/off
+pair cannot separate the lamp from the subject tiring, and the tool says so
+when it sees one run of a label.
+
+`bin/irprobe --label X` is the 8-second version: gain, R/G, face brightness,
+iris contrast. No fixation needed. Note **gain is saturated at 109** in every
+dim condition and is useless there; read iris contrast.
 
 ## Thursday: the 850 nm IR test — how to decide it
 
