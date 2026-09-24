@@ -231,14 +231,18 @@ grid. Seats the player before calibrating.
 speaks. Reads the device's real `.menu` files and plays its real recorded
 clips. 3x2 because at 504 mm a cell is 640x540 px and 2x the measured error
 needs 327 px at the mean, 556 at p95 — 3x2 is comfortable, 4x2 is tight on
-both axes. **Status: runs, gives "some control, but very jumpy", not yet a
-successful demo.** Cell hysteresis was added in response and is untested.
+both axes. **Status: runs; was "very jumpy" before the lamp.** Cell hysteresis was added
+in response and is untested on hardware.
 
-**The open question that decides the next move:** nobody has measured the
-sample-to-sample noise of the gaze point *during a fixation*. That single
-measurement separates "a filtering and UX problem" from "the landmark estimate
-is too noisy at this working distance", and they call for completely different
-fixes. Do it before changing trackers.
+**Measured 2026-09-23 with the lamp on:** fixation scatter 26.7 → 15.0 px,
+time to acquire 11.3 → 8.7 s (about 7 selections per minute), valid throws
+93% → 97%. The talker's jumpiness was largely the light, and partly a UX
+problem — not a reason to change trackers.
+
+**Time to acquire is the usability number**, and 8.7 s is measured on a ~64 px
+target that *moves*. A talker AAC cell is 640×540 px and stationary, so that
+figure is a floor rather than a ceiling. Measuring it on the 3×2 board is the
+test that would actually decide the interface.
 
 ## Open
 
