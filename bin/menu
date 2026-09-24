@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+"""Kiosk launcher for the faire: pick an activity, run it, come back.
+
+Built for a table where the operator is busy and the visitor is a stranger.
+Everything follows from that:
+
+  BOTH INPUTS, ALWAYS. Mouse and keyboard both drive it. Gaze deliberately
+  does NOT -- the menu is what you use when gaze is not yet calibrated, and a
+  menu you need working gaze to escape is a trap.
+
+  BIG TARGETS. Three full-width rows. A visitor should never need precision
+  to start, and the operator should be able to hit one without looking.
+
+  IT ALWAYS COMES BACK. Each activity is a child process; when it exits, for
+  any reason including a crash, the menu redraws. Nothing leaves a stranger
+  facing a terminal.
+
+  NO ACCIDENTAL EXIT. Quit is deliberately not a row -- it is a key chord, so
+  a visitor cannot end the session by clicking the wrong thing.
+
+Keys:  up/down or 1-3 to choose    ENTER or SPACE to start    Q then Y to quit
+"""
+
+import os
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import cv2
+import numpy as np
+
+from spike import config, nosleep
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+BUNNY = os.path.expanduser("~/bunny")
+TALKER_MENU = os.path.join(ROOT, "talker", "menus", "base_fruitjam.menu")
+TALKER_SOUNDS = os.path.join(ROOT, "talker")
+
+BG = (18, 18, 22)
+ROW = (38, 40, 52)
+ROW_SEL = (64, 96, 150)
+EDGE = (90, 94, 110)
+TEXT = (238, 238, 244)
+DIM = (150, 152, 165)
+ACCENT = (250, 200, 90)
+
+ITEMS = [
+    ("Bunny Feeding Frenzy", "look at a bunny to feed it",
+     ["bash", "-lc",
+      "cd %s && BFF_GAZE_STUDY=1 BFF_GAZE=1 DISPLAY=:0 python3 -u main.py" % BUNNY]),
+    ("T-Rex Talker  —  eyes", "look at a word, then press SPACE",
+     ["python3", os.path.join(HERE, "talker"),
+      "--menu", TALKER_MENU, "--sounds", TALKER_SOUNDS]),
+    ("T-Rex Talker  —  mouse", "point at a word and click",
+     ["python3", os.path.join(HERE, "talker"),
+      "--menu", TALKER_MENU, "--sounds", TALKER_SOUNDS, "--mouse"]),
+]
+
+WIN = "menu"
+
+
+def beep(kind=None):
+    try:
+        subprocess.run(["python3", os.path.join(HERE, "beep")]
+                       + ([kind] if kind else []), capture_output=True, timeout=6)
+    except Exception:
+        pass
+
+
+def draw(canvas, W, H, sel, confirm_quit, note):
+    canvas[:] = BG
+    F = cv2.FONT_HERSHEY_SIMPLEX
+
+    def centre(txt, y, scale, col, th):
+        (tw, _), _ = cv2.getTextSize(txt, F, scale, th)
+        cv2.putText(canvas, txt, ((W - tw) // 2, y), F, scale, col, th, cv2.LINE_AA)
+
+    centre("Eye Gaze Demos", int(H * 0.13), 2.0, TEXT, 4)
+    centre("Arduino UNO Q", int(H * 0.19), 0.9, DIM, 2)
+
+    top = int(H * 0.26)
+    rh = int(H * 0.16)
+    gap = int(H * 0.035)
+    for i, (name, sub, _) in enumerate(ITEMS):
+        y0 = top + i * (rh + gap)
+        x0, x1 = int(W * 0.12), int(W * 0.88)
+        on = (i == sel)
+        cv2.rectangle(canvas, (x0, y0), (x1, y0 + rh), ROW_SEL if on else ROW, -1)
+        cv2.rectangle(canvas, (x0, y0), (x1, y0 + rh),
+                      ACCENT if on else EDGE, 4 if on else 1)
+        cv2.putText(canvas, "%d" % (i + 1), (x0 + 26, y0 + int(rh * 0.62)),
+                    F, 1.5, ACCENT if on else DIM, 3, cv2.LINE_AA)
+        cv2.putText(canvas, name, (x0 + 90, y0 + int(rh * 0.45)),
+                    F, 1.5, TEXT, 3, cv2.LINE_AA)
+        cv2.putText(canvas, sub, (x0 + 92, y0 + int(rh * 0.78)),
+                    F, 0.85, DIM, 2, cv2.LINE_AA)
+
+    if confirm_quit:
+        centre("Quit?   press Y to confirm, any other key to stay",
+               int(H * 0.88), 1.1, (255, 140, 140), 3)
+    elif note:
+        centre(note, int(H * 0.88), 1.0, DIM, 2)
+    else:
+        centre("click, or arrows and ENTER", int(H * 0.88), 1.0, DIM, 2)
+
+
+def row_at(y, H):
+    top, rh, gap = int(H * 0.26), int(H * 0.16), int(H * 0.035)
+    for i in range(len(ITEMS)):
+        y0 = top + i * (rh + gap)
+        if y0 <= y <= y0 + rh:
+            return i
+    return None
+
+
+def main():
+    cfg = config.load(os.path.join(ROOT, "config.toml"))
+    W, H = cfg["screen"]["width_px"], cfg["screen"]["height_px"]
+
+    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+    cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    nosleep.hold()
+    canvas = np.zeros((H, W, 3), np.uint8)
+
+    state = {"sel": 0, "click": None, "hover": None}
+
+    def on_mouse(event, x, y, flags, param):
+        r = row_at(y, H)
+        if r is not None:
+            state["hover"] = r
+            if event == cv2.EVENT_MOUSEMOVE:
+                state["sel"] = r
+        if event == cv2.EVENT_LBUTTONDOWN and r is not None:
+            state["click"] = r
+    cv2.setMouseCallback(WIN, on_mouse)
+
+    confirm_quit = False
+    note = ""
+    note_until = 0.0
+
+    while True:
+        if note and time.time() > note_until:
+            note = ""
+        draw(canvas, W, H, state["sel"], confirm_quit, note)
+        cv2.imshow(WIN, canvas)
+        k = cv2.waitKey(30) & 0xFF
+
+        chosen = None
+        if state["click"] is not None:
+            chosen = state["click"]
+            state["click"] = None
+        elif k in (13, 10, 32):
+            chosen = state["sel"]
+        elif k in (82, 0x26) or k == ord('w'):
+            state["sel"] = (state["sel"] - 1) % len(ITEMS)
+        elif k in (84, 0x28) or k == ord('s'):
+            state["sel"] = (state["sel"] + 1) % len(ITEMS)
+        elif k in (ord('1'), ord('2'), ord('3')):
+            state["sel"] = k - ord('1')
+            chosen = state["sel"]
+        elif confirm_quit and k == ord('y'):
+            break
+        elif k == ord('q'):
+            confirm_quit = True
+            continue
+        elif k != 255:
+            confirm_quit = False
+
+        if chosen is None:
+            continue
+        confirm_quit = False
+
+        name, _, cmd = ITEMS[chosen]
+        # Hand the screen over cleanly: a lingering fullscreen OpenCV window
+        # sits on top of whatever the child opens.
+        cv2.destroyWindow(WIN)
+        cv2.waitKey(1)
+        beep("--go")
+        env = dict(os.environ, DISPLAY=os.environ.get("DISPLAY", ":0"))
+        try:
+            subprocess.run(cmd, env=env)
+            note = "%s finished" % name
+        except Exception as e:
+            note = "could not start %s: %s" % (name, e)
+        note_until = time.time() + 6.0
+
+        cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        cv2.setMouseCallback(WIN, on_mouse)
+        nosleep.hold()
+        beep()
+
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()

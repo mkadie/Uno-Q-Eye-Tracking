@@ -309,6 +309,43 @@ Also expect a high blink-exclusion rate in the last rows of that batch: the
 subject was tired and said so. That is the flags working, not a fault, but it
 is not representative of a fresh visitor.
 
+## Faire kiosk: auto-login into a menu
+
+Built 2026-09-23, **NOT yet tested on hardware** — the board was packed away.
+Tomorrow: deploy, then test.
+
+    tools/setup_kiosk.sh            # dry run, shows what it would change
+    tools/setup_kiosk.sh --apply    # autologin + autostart
+    tools/setup_kiosk.sh --undo     # put it back
+
+`bin/menu` is a fullscreen launcher with three rows:
+
+| row | what it runs |
+|---|---|
+| Bunny Feeding Frenzy | the gaze study build (`BFF_GAZE_STUDY=1`) |
+| T-Rex Talker — eyes | `bin/talker`, gaze aims, SPACE/ENTER/click speaks |
+| T-Rex Talker — mouse | `bin/talker --mouse`, pointer only |
+
+**Mouse AND keyboard both work; gaze deliberately does not.** The menu is what
+you use when gaze is not calibrated yet, and a menu that needs working gaze to
+escape is a trap. Arrows or 1–3 to choose, ENTER/SPACE/click to start.
+
+**Quit is a chord (Q then Y), not a row** — a visitor cannot end the session
+by clicking the wrong thing.
+
+**Each activity is a child process**, so when it exits for any reason,
+including a crash, the menu redraws. Nothing leaves a stranger at a terminal.
+
+Deliberately NOT a systemd service replacing the desktop: the menu needs a
+real X session (OpenCV windows, the cursor, `xset` for blanking), and a bare
+service loses all of it. It also leaves the desktop reachable if the menu is
+killed — at a faire a visitor facing a black screen is worse than one facing
+a desktop.
+
+**Both talkers already take mouse button, SPACE and ENTER** to speak a word:
+`fire = k in (32, 13, 10) or mouse["click"]` in `bin/talker`. No change was
+needed there.
+
 ## The lamp WORKS — measured 2026-09-23, two instruments agree
 
 It is **16 red LEDs plus one 850 nm IR LED** — a red illuminator, so the
