@@ -33,6 +33,8 @@ the fallback for someone with no switch at all, not the default.
 
 Keys:  SPACE / ENTER speak    q quit    r recalibrate    b back    m mouse
 Mouse: LEFT speak    RIGHT or MIDDLE back to the main menu
+       the 'exit' chip, top right of the HOME board only, leaves the
+       talker: click once to arm, again within 4 s to confirm.
 """
 
 import argparse
@@ -65,6 +67,7 @@ TEXT = (238, 238, 244)
 DIM = (150, 152, 165)
 ACCENT = (250, 200, 90)
 OK = (110, 220, 130)
+WARN = (70, 90, 210)          # BGR: a muted red, for the armed exit chip
 
 
 # --------------------------------------------------------------------------
@@ -194,6 +197,40 @@ def back_target(m, menu_dir, stack):
             return menulib.load(path), os.path.dirname(os.path.abspath(path))
         print("back target not found: %s" % path)
     return None
+
+
+# The exit chip lives in the title strip above the grid (cell_at returns
+# None for y < 90), so it costs the board no word. It is deliberately small
+# and jammed into the corner: gaze p95 is ~164 px, so a 170x56 target up
+# there is effectively unreachable by a visitor's wandering gaze and
+# trivial with the operator's mouse. That asymmetry IS the safety feature --
+# the exit is for whoever is running the booth, not for whoever is sitting
+# in the chair.
+EXIT_W, EXIT_H, EXIT_PAD = 170, 56, 16
+EXIT_ARM_S = 4.0                 # how long a first press stays armed
+
+
+def exit_rect(w, h):
+    x1 = w - EXIT_PAD
+    return (x1 - EXIT_W, EXIT_PAD, x1, EXIT_PAD + EXIT_H)
+
+
+def in_exit(x, y, w, h):
+    x0, y0, x1, y1 = exit_rect(w, h)
+    return x0 <= x <= x1 and y0 <= y <= y1
+
+
+def draw_exit_chip(canvas, w, h, armed, hot):
+    x0, y0, x1, y1 = exit_rect(w, h)
+    fill = WARN if armed else (CELL_HOVER if hot else CELL)
+    cv2.rectangle(canvas, (x0, y0), (x1, y1), fill, -1)
+    cv2.rectangle(canvas, (x0, y0), (x1, y1), TEXT if armed else EDGE, 2)
+    label = "SURE?" if armed else "exit"
+    scale = 0.9 if armed else 0.8
+    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
+    cv2.putText(canvas, label, ((x0 + x1 - tw) // 2, (y0 + y1 + th) // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, scale, TEXT if armed else DIM, 2,
+                cv2.LINE_AA)
 
 
 def draw_board(canvas, m, hover, w, h, status, dwell_frac=0.0):
@@ -341,6 +378,7 @@ def main():
     # into a submenu (which the kiosk menu can do) makes them disagree, and
     # the board the visitor was handed is the one "main menu" means.
     home = (m, menu_dir)
+    exit_armed_until = 0.0           # first press arms, second press leaves
     if m.columns * m.rows != 6:
         print("note: %s is %dx%d, not 3x2 -- drawing it anyway"
               % (os.path.basename(args.menu), m.columns, m.rows))
@@ -432,6 +470,10 @@ def main():
 
     while True:
         now = time.perf_counter()
+        # The exit chip is offered on the home board ONLY. Deep in a submenu
+        # it would be one more thing for a visitor to find, and the operator
+        # can always right-click home first.
+        at_home = (m, menu_dir) == home
         dt = now - t_prev
         t_prev = now
 
@@ -498,6 +540,9 @@ def main():
                   "   r recalibrate   m %s   q quit   [hold %d  smooth %.2f]"
                   % (src, "gaze" if use_mouse else "mouse", args.hold, args.smooth))
         draw_board(canvas, m, hover, W, H, status, frac)
+        if at_home:
+            draw_exit_chip(canvas, W, H, now < exit_armed_until,
+                           in_exit(mouse["x"], mouse["y"], W, H))
         cv2.circle(canvas, (int(gx), int(gy)), 16, (255, 255, 255), 2)
         cv2.circle(canvas, (int(gx), int(gy)), 3, ACCENT, -1)
         cv2.imshow(WIN, canvas)
@@ -516,8 +561,23 @@ def main():
                 hover, cand, cand_n = None, None, 0
             continue
 
-        fire = k in (32, 13, 10) or mouse["click"] or (frac >= 1.0)
+        clicked = mouse["click"]
         mouse["click"] = False
+        fire = k in (32, 13, 10) or clicked or (frac >= 1.0)
+
+        # The chip takes a LEFT-CLICK and never a dwell. Two independent
+        # guards, because an exit that fires by accident mid-demo is worse
+        # than one that takes a second click: the corner is out of gaze
+        # reach, and gaze cannot press it even if a visitor gets there.
+        # It sits above the grid, so `press` is already None here and the
+        # ordinary fire path would silently do nothing with the click.
+        if at_home and clicked and in_exit(mouse["x"], mouse["y"], W, H):
+            if now < exit_armed_until:
+                break
+            exit_armed_until = now + EXIT_ARM_S
+            continue
+        if clicked:
+            exit_armed_until = 0.0       # a press anywhere else disarms
 
         if k == ord('q'):
             break
