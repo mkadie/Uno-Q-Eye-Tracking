@@ -177,6 +177,24 @@ class Voice(object):
 # Board drawing
 
 
+def back_target(m, menu_dir, stack):
+    """Where a Back press goes, or None if nowhere.
+
+    Pop the breadcrumb first, so Back retraces the route the user actually
+    took. Fall back to the menu's own `[menu] back = <file>` when there is
+    nothing to pop -- a menu opened directly rather than navigated into has
+    an empty stack, and without the fallback its Back cell is dead.
+    """
+    if stack:
+        return stack.pop()
+    if m.back:
+        path = menulib.resolve(m.back, menu_dir)
+        if path and os.path.exists(path):
+            return menulib.load(path), os.path.dirname(os.path.abspath(path))
+        print("back target not found: %s" % path)
+    return None
+
+
 def draw_board(canvas, m, hover, w, h, status, dwell_frac=0.0):
     canvas[:] = BG
     cols, rows = m.columns, m.rows
@@ -195,7 +213,7 @@ def draw_board(canvas, m, hover, w, h, status, dwell_frac=0.0):
                 fill = (26, 26, 32)
             elif is_hover:
                 fill = CELL_HOVER
-            elif p.is_submenu:
+            elif p.navigates:
                 fill = CELL_SUB
             else:
                 fill = CELL
@@ -226,8 +244,9 @@ def draw_board(canvas, m, hover, w, h, status, dwell_frac=0.0):
                 cv2.putText(canvas, ln, ((x0 + x1 - tw) // 2, ty + th // 2),
                             cv2.FONT_HERSHEY_SIMPLEX, scale, TEXT, 4, cv2.LINE_AA)
                 ty += 64
-            if p.is_submenu:
-                cv2.putText(canvas, "more >", (x0 + 18, y1 - 18),
+            if p.navigates:
+                cv2.putText(canvas, "< back" if p.is_back else "more >",
+                            (x0 + 18, y1 - 18),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, DIM, 2, cv2.LINE_AA)
             if is_hover and dwell_frac > 0:
                 bw = int((x1 - x0 - 40) * min(1.0, dwell_frac))
@@ -477,9 +496,11 @@ def main():
             else:
                 use_mouse = not use_mouse
             continue
-        if k == ord('b') and stack:
-            m, menu_dir = stack.pop()
-            hover, dwell_since = None, None
+        if k == ord('b'):
+            nxt = back_target(m, menu_dir, stack)
+            if nxt is not None:
+                m, menu_dir = nxt
+                hover, dwell_since = None, None
             continue
         if k == ord('r') and cam is not None:
             nm = calibrate(cam, be, cfg, canvas, args.points, rng)
@@ -493,7 +514,12 @@ def main():
             cx, cy = cell_centre(hover[0], hover[1], m, W, H)
             log.append((press.label, gx - cx, gy - cy, src))
             dwell_since = now
-            if press.is_submenu:
+            if press.is_back:
+                nxt = back_target(m, menu_dir, stack)
+                if nxt is not None:
+                    m, menu_dir = nxt
+                    hover = None
+            elif press.is_submenu:
                 path = menulib.resolve(press.submenu, menu_dir)
                 if path and os.path.exists(path):
                     stack.append((m, menu_dir))

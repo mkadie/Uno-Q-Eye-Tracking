@@ -190,3 +190,55 @@ position = 1
 """)
     ok, bad = M.audit_clips(str(tmp_path / "loop.menu"), lambda p: None)
     assert ok == [] and bad == []
+
+
+# --- Back ---------------------------------------------------------------
+# MEASURED 2026-09-24: Back highlighted, accepted a press and did nothing.
+# The `.menu` format marks the back cell with a BARE `back =` key -- an empty
+# VALUE whose PRESENCE is the whole signal -- and names the destination as
+# `[menu] back = <file>`. Parsing either with a truthiness test loses it.
+
+_BACK_MENU = """[menu]
+name = Food
+columns = 3
+rows = 2
+back = base.menu
+
+[apple]
+label = Apple
+sound = apple.wav
+position = 1
+
+[back_button]
+label = Back
+position = 6
+back =
+"""
+
+
+def _write(tmp_path, text, name="food.menu"):
+    p = tmp_path / name
+    p.write_text(text)
+    return str(p)
+
+
+def test_bare_back_key_marks_the_press(tmp_path):
+    m = M.load(_write(tmp_path, _BACK_MENU))
+    back = [p for p in m.presses if p.label == "Back"][0]
+    assert back.is_back
+    assert back.navigates
+    assert not [p for p in m.presses if p.label == "Apple"][0].is_back
+
+
+def test_menu_level_back_names_the_destination(tmp_path):
+    m = M.load(_write(tmp_path, _BACK_MENU))
+    assert m.back == "base.menu"
+
+
+def test_a_back_press_is_not_a_missing_clip(tmp_path):
+    # Back speaks nothing by design, so the startup audit must not report it
+    # as a silent cell -- that is the noise that hid the real missing clips.
+    path = _write(tmp_path, _BACK_MENU)
+    ok, bad = M.audit_clips(path, lambda s: False)
+    assert ok == []
+    assert [lbl for _, lbl, _ in bad] == ["Apple"]

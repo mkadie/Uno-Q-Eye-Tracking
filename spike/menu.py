@@ -26,6 +26,14 @@ class Press(object):
         self.sound = fields.get("sound")
         self.image = fields.get("image")
         self.submenu = fields.get("submenu")
+        # `back =` with an EMPTY value marks a press as the back button. The
+        # key's presence is the signal, not its value -- so test membership,
+        # never truthiness. MEASURED 2026-09-24: parsing it with .get() made
+        # Back a press with no sound and no submenu, i.e. a cell that
+        # highlighted, accepted a press and did nothing at all.
+        self.is_back = "back" in fields
+        # A press may also name where to go, overriding the menu's own `back`.
+        self.back = (fields.get("back") or "").strip() or None
         try:
             self.position = int(fields.get("position", 0))
         except ValueError:
@@ -35,6 +43,11 @@ class Press(object):
     def is_submenu(self):
         return bool(self.submenu)
 
+    @property
+    def navigates(self):
+        """Goes somewhere rather than speaking."""
+        return self.is_submenu or self.is_back
+
     def __repr__(self):
         return "Press(%r, pos=%d%s)" % (
             self.label, self.position, ", submenu" if self.submenu else "")
@@ -43,8 +56,12 @@ class Press(object):
 class Menu(object):
     """A grid of presses, ordered by `position` (1-based, row-major)."""
 
-    def __init__(self, name, columns, rows, presses, path=None, fields=None):
+    def __init__(self, name, columns, rows, presses, path=None, fields=None,
+                 back=None):
         self.name = name
+        # `[menu] back = other.menu` -- where a back press goes when there is
+        # no navigation history to pop (e.g. this menu was opened directly).
+        self.back = back
         self.columns = int(columns)
         self.rows = int(rows)
         self.path = path
@@ -110,6 +127,7 @@ def parse(text, path=None):
         presses=presses,
         path=path,
         fields=meta,
+        back=(meta.get("back") or "").strip() or None,
     )
 
 
@@ -148,6 +166,8 @@ def audit_clips(path, has_clip, _seen=None):
     m = load(path)
     ok, bad = [], []
     for pr in m.presses:
+        if pr.is_back:
+            continue          # navigation, not speech
         if pr.is_submenu:
             sub = resolve(pr.submenu, os.path.dirname(path))
             if sub:
