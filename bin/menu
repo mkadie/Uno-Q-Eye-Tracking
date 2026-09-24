@@ -48,9 +48,13 @@ DIM = (150, 152, 165)
 ACCENT = (250, 200, 90)
 
 ITEMS = [
+    # Via run_study.sh, not main.py directly: the launcher also pins the audio
+    # sink by name and rescues the USB speaker's volume, which resets itself to
+    # 0% on re-enumeration while PipeWire still reports 54%. BFF_FOREGROUND
+    # makes it block, so the menu redraws when the game ends rather than
+    # flashing back over a game that is still starting.
     ("Bunny Feeding Frenzy", "look at a bunny to feed it",
-     ["bash", "-lc",
-      "cd %s && BFF_GAZE_STUDY=1 BFF_GAZE=1 DISPLAY=:0 python3 -u main.py" % BUNNY]),
+     ["bash", "-lc", "BFF_FOREGROUND=1 %s/run_study.sh" % BUNNY]),
     ("T-Rex Talker  —  eyes", "look at a word, then press SPACE",
      ["python3", os.path.join(HERE, "talker"),
       "--menu", TALKER_MENU, "--sounds", TALKER_SOUNDS]),
@@ -60,6 +64,26 @@ ITEMS = [
 ]
 
 WIN = "menu"
+
+
+def setup_audio():
+    """Pin the sink and rescue a silent speaker, once, at menu start.
+
+    The USB speaker's own PCM volume resets to 0% on re-enumeration while
+    PipeWire still reports its sink at 54% -- routed correctly, completely
+    silent. Both talkers speak, so this cannot live only in the game's
+    launcher.
+    """
+    sh = os.path.join(BUNNY, "run_study.sh")
+    if not os.path.exists(sh):
+        return
+    try:
+        r = subprocess.run(["bash", sh, "--audio-only"],
+                           capture_output=True, text=True, timeout=25)
+        for line in (r.stdout or "").strip().splitlines():
+            print("[menu] %s" % line)
+    except Exception as e:
+        print("[menu] audio setup skipped: %s" % e)
 
 
 def beep(kind=None):
@@ -123,6 +147,7 @@ def main():
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
     cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
     nosleep.hold()
+    setup_audio()
     canvas = np.zeros((H, W, 3), np.uint8)
 
     state = {"sel": 0, "click": None, "hover": None}
