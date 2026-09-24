@@ -1552,3 +1552,52 @@ It also separates two things the old version conflated:
 twice, alternating. One run per condition cannot distinguish a lamp's effect
 from the subject getting tired over the session, and the tool now says so when
 it sees a single run.
+
+## 2026-09-23 — the red lamp cuts gaze scatter 3.2×. Four runs, alternating.
+
+Rebuilt protocol, four runs in the order on / off / on / off so that a drift
+in the subject across the session cannot be mistaken for an effect of the lamp.
+
+| condition | runs (px) | pooled median | 95% CI |
+|---|---|---|---|
+| **lamp on** | 83.4, 79.3 | **82.5 px (1.65°)** | [69.9, 99.4] |
+| lamp off | 170.6, 317.9 | 267.5 px (5.35°) | [191.4, 322.4] |
+| **difference** | | **+183.7 px** | **[+105.0, +242.8]** |
+
+The interval excludes zero by a wide margin. **The lamp reduces per-fixation
+scatter by about 3.2×**, from 5.35° to 1.65°.
+
+**The alternating order is what makes this trustworthy.** Run 3 (lamp on,
+later in the session) came back at 79.3 px against run 1's 83.4 — so the
+effect tracks the lamp, not elapsed time. A single on/off pair would have
+produced a confident number that fatigue could equally explain.
+
+**A second finding, in the spread rather than the median.** The two `lamp_on`
+runs differ by 5%; the two `lamp_off` runs differ by **86%** (170.6 vs 317.9).
+Without the lamp the tracker is not merely worse, it is *unpredictable* — and
+for a public demo that is the more damaging property.
+
+### What is NOT established: the accuracy effect
+
+Offset-from-target, which is accuracy rather than steadiness:
+
+| condition | offsets (px) |
+|---|---|
+| lamp on | 235.8, 303.0 |
+| lamp off | 551.4, 297.0 |
+
+**The ranges overlap and the effect is not resolved.** One `lamp_off` run was
+the worst of the four and one was mid-pack. Accuracy is dominated by
+calibration quality, which varies more between sittings than the lamp varies
+it — consistent with 2026-09-22, where two calibrations twenty minutes apart
+scored 8.99° and 5.40°.
+
+So the honest claim is narrow: **the lamp makes the gaze point steadier, and
+the accuracy benefit is unproven.** Steadiness is what a dwell-selection
+interface consumes, so this is the useful half.
+
+**Caveats:** one subject, one room, one evening, all four runs at a face
+brightness well below the 128.7 seen earlier in the week. The pipeline ran at
+7.2 Hz throughout against 18–25 documented, so each 1.5 s fixation yielded
+only ~11 samples; both conditions share that handicap, but it makes every
+per-fixation scatter noisier than it needs to be and is worth chasing.
