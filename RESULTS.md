@@ -1601,3 +1601,30 @@ brightness well below the 128.7 seen earlier in the week. The pipeline ran at
 7.2 Hz throughout against 18–25 documented, so each 1.5 s fixation yielded
 only ~11 samples; both conditions share that handicap, but it makes every
 per-fixation scatter noisier than it needs to be and is worth chasing.
+
+## 2026-09-23 — the lamp effect reproduces in the game, on a different instrument
+
+Same game, same subject, consecutive evenings. Not a controlled A/B — the
+sessions differ in calibration, day and room state — but it is an independent
+measurement of the same claim.
+
+| | Tue 09-22, no lamp | Wed 09-23, LAMP ON | change |
+|---|---|---|---|
+| valid throws | 37 / 40 (93%) | 38 / 39 (97%) | |
+| **fixation scatter p50** | 26.7 px | **15.0 px** | **−44%** |
+| **time to acquire p50** | 11.3 s | **8.7 s** | **−23%** |
+| selections per minute | 5.3 | **6.9** | +30% |
+| error p50 (truncated) | 5.40° | 5.23° | unchanged |
+
+**Two independent instruments now agree.** The controlled four-run A/B on
+`bin/fixate` measured scatter falling 3.2× with the lamp; the game — different
+code, different task, different night — shows it falling 44% and acquisition
+speeding up 23%. Agreement across instruments is worth more than either
+result alone, and neither was tuned to produce the other.
+
+The truncated error being unchanged is expected rather than disappointing:
+fire-on-target caps error by construction, so it cannot move.
+
+**6.9 selections per minute is still the number to beat**, and it is measured
+on a ~64 px target that moves. The AAC cell it is meant to inform is
+640×540 px and stationary.
