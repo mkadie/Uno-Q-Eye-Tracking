@@ -144,7 +144,7 @@ def main():
     cfg = config.load(os.path.join(ROOT, "config.toml"))
     W, H = cfg["screen"]["width_px"], cfg["screen"]["height_px"]
 
-    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
     cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
     nosleep.hold()
     setup_audio()
@@ -212,7 +212,7 @@ def main():
             note = "could not start %s: %s" % (name, e)
         note_until = time.time() + 6.0
 
-        cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+        cv2.namedWindow(WIN, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
         cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
         cv2.setMouseCallback(WIN, on_mouse)
         nosleep.hold()

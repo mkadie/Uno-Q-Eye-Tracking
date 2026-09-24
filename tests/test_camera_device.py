@@ -21,7 +21,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from spike.camera import Camera
 
-BY_ID = "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_1DB6303F-video-index0"
+# A serial that cannot exist, NOT this rig's real C920. The literal path
+# used to be the attached camera's, so the test asserted "does not
+# resolve" about a symlink that resolves whenever the camera is plugged
+# in -- it passed on a laptop and failed on the board, backwards from
+# every other test here.
+BY_ID = "/dev/v4l/by-id/usb-046d_HD_Pro_Webcam_C920_NOSUCHDEV-video-index0"
 
 
 def test_plain_node_is_left_alone():

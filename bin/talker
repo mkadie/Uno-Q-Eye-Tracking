@@ -32,6 +32,7 @@ the fallback for someone with no switch at all, not the default.
     bin/talker --dwell 1.2              also select by looking for 1.2 s
 
 Keys:  SPACE / ENTER speak    q quit    r recalibrate    b back    m mouse
+Mouse: LEFT speak    RIGHT or MIDDLE back to the main menu
 """
 
 import argparse
@@ -334,6 +335,12 @@ def main():
 
     menu_dir = os.path.dirname(os.path.abspath(args.menu))
     m = menulib.load(args.menu)
+    # Home is the board we STARTED on, not the bottom of the breadcrumb
+    # stack and not the end of the `back =` chain. Those two agree with it
+    # only when the user navigated down from the root; launching straight
+    # into a submenu (which the kiosk menu can do) makes them disagree, and
+    # the board the visitor was handed is the one "main menu" means.
+    home = (m, menu_dir)
     if m.columns * m.rows != 6:
         print("note: %s is %dx%d, not 3x2 -- drawing it anyway"
               % (os.path.basename(args.menu), m.columns, m.rows))
@@ -369,7 +376,14 @@ def main():
                             c["gain"]).open()
         be = backends.create(prefer=cfg["inference"]["backend"])
 
-    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
+    # GUI_NORMAL is NOT cosmetic here. This OpenCV is built against Qt5, and
+    # cv2.WINDOW_GUI_EXPANDED is *zero* -- so the bare WINDOW_NORMAL we used
+    # to pass silently selected the expanded Qt chrome, which grabs
+    # right-click for its own "Save image" popup. Right-click is the home
+    # gesture on a board with no keyboard, and a popup nobody can dismiss
+    # without one is the worst failure available. GUI_NORMAL (16) turns the
+    # toolbar and that menu off and gives the button back to us.
+    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
     if not args.windowed:
         cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
     # OpenCV drawing is not an input event, so X will blank on us mid-demo.
@@ -384,12 +398,17 @@ def main():
         if mapper is None:
             print("calibration aborted; falling back to the pointer")
 
-    mouse = {"x": W // 2, "y": H // 2, "click": False}
+    mouse = {"x": W // 2, "y": H // 2, "click": False, "home": False}
 
     def on_mouse(event, x, y, flags, param):
         mouse["x"], mouse["y"] = x, y
         if event == cv2.EVENT_LBUTTONDOWN:
             mouse["click"] = True
+        # Right OR middle, because a middle button is a wheel press on most
+        # mice and misses about as often as it fires. Both mean home: there
+        # is no keyboard on the board, so `b` is not reachable by a visitor.
+        elif event in (cv2.EVENT_RBUTTONDOWN, cv2.EVENT_MBUTTONDOWN):
+            mouse["home"] = True
     cv2.setMouseCallback(WIN, on_mouse)
 
     # MEASURED on the bunny game, and the same failure appears here: at ~16 Hz
@@ -475,14 +494,27 @@ def main():
         press = m.at(*hover) if hover else None
 
         src = "mouse" if use_mouse else "gaze"
-        status = ("%s   SPACE/ENTER speak   b back   r recalibrate   m %s   q quit"
-                  "   [hold %d  smooth %.2f]"
+        status = ("%s   click/dwell speak   RIGHT-CLICK home   b back"
+                  "   r recalibrate   m %s   q quit   [hold %d  smooth %.2f]"
                   % (src, "gaze" if use_mouse else "mouse", args.hold, args.smooth))
         draw_board(canvas, m, hover, W, H, status, frac)
         cv2.circle(canvas, (int(gx), int(gy)), 16, (255, 255, 255), 2)
         cv2.circle(canvas, (int(gx), int(gy)), 3, ACCENT, -1)
         cv2.imshow(WIN, canvas)
         k = cv2.waitKey(1) & 0xFF
+
+        # Home is checked BEFORE `fire` is latched. Below the latch the
+        # click has already been folded into `fire` and clearing it does
+        # nothing -- the cell under the cursor speaks on the way out.
+        if mouse["home"]:
+            mouse["home"] = False
+            mouse["click"] = False       # navigation never also speaks
+            dwell_since = now            # and never lands mid-dwell either
+            if (m, menu_dir) != home:
+                m, menu_dir = home
+                del stack[:]
+                hover, cand, cand_n = None, None, 0
+            continue
 
         fire = k in (32, 13, 10) or mouse["click"] or (frac >= 1.0)
         mouse["click"] = False

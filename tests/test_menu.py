@@ -242,3 +242,29 @@ def test_a_back_press_is_not_a_missing_clip(tmp_path):
     ok, bad = M.audit_clips(path, lambda s: False)
     assert ok == []
     assert [lbl for _, lbl, _ in bad] == ["Apple"]
+
+
+# --- kiosk window flags -------------------------------------------------
+
+def _bin(name):
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "bin", name)) as fh:
+        return fh.read()
+
+
+@pytest.mark.parametrize("name", ["talker", "menu"])
+def test_kiosk_windows_disable_the_qt_context_menu(name):
+    """Right-click must reach our callback, not Qt's "Save image" popup.
+
+    This OpenCV is built with GUI: QT5, and cv2.WINDOW_GUI_EXPANDED is
+    *zero* -- so a bare WINDOW_NORMAL selects the expanded chrome and Qt
+    eats the right button. Right-click is the home gesture on a board with
+    no keyboard attached, and a popup that needs a keyboard to dismiss is
+    unrecoverable for a visitor. Only the flag prevents it, nothing raises
+    without it, and no unit test can click a mouse -- so assert the source.
+    """
+    src = _bin(name)
+    assert "cv2.namedWindow" in src
+    for line in src.splitlines():
+        if "cv2.namedWindow" in line:
+            assert "WINDOW_GUI_NORMAL" in line, line.strip()
