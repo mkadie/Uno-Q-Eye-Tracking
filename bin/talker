@@ -324,6 +324,24 @@ def main():
                                               len(m.presses)))
     print("voice : %s" % voice.describe())
 
+    # Check every clip in this menu AND every submenu it can reach, before a
+    # visitor finds the gap by pressing a button and hearing nothing.
+    #
+    # MEASURED 2026-09-24: the Food & Drink submenu was entirely silent
+    # because its clips live in menus/sounds/ and only button_sounds/ had been
+    # copied to the board. Nothing errored -- the cell highlighted, the press
+    # registered, and no sound came out. An AAC board that silently fails to
+    # speak is worse than one that refuses to start.
+    have, miss = menulib.audit_clips(args.menu, voice._clip)
+    if miss:
+        print("audio : *** %d of %d presses CANNOT SPEAK ***"
+              % (len(miss), len(have) + len(miss)))
+        for mn, lab, why in miss[:12]:
+            print("        %-16s %-22s %s" % (mn, lab, why))
+        print("        (--quiet prints instead of speaking, if that is wanted)")
+    else:
+        print("audio : all %d presses have a clip" % len(have))
+
     cam = be = mapper = None
     if not args.mouse:
         c = cfg["camera"]

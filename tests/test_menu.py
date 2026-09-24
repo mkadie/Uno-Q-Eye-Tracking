@@ -112,3 +112,81 @@ def test_reads_the_real_fruitjam_menu():
     assert len(m.presses) == 6
     assert m.at(0, 0).label == "Yes"
     assert m.at(2, 1).is_submenu
+
+
+def test_audit_clips_finds_a_silent_submenu(tmp_path):
+    """The Food & Drink submenu was silent and nothing said so.
+
+    MEASURED 2026-09-24: its clips live under menus/sounds/ while only
+    button_sounds/ had been copied to the board. The cell highlighted, the
+    press registered, no sound came out. An AAC board that silently fails to
+    speak is worse than one that refuses to start.
+    """
+    (tmp_path / "base.menu").write_text("""
+[menu]
+name = Base
+columns = 3
+rows = 2
+[yes]
+label = Yes
+sound = /button_sounds/yes.mp3
+position = 1
+[food]
+label = Food
+submenu = food.menu
+position = 2
+""")
+    (tmp_path / "food.menu").write_text("""
+[menu]
+name = Food
+columns = 3
+rows = 2
+[water]
+label = Water
+sound = sounds/food/water.mp3
+position = 1
+[back]
+label = Back
+position = 2
+""")
+    # Only button_sounds resolves -- exactly the board's state that evening.
+    def has_clip(p):
+        return p.sound if p.sound and "button_sounds" in p.sound else None
+
+    ok, bad = M.audit_clips(str(tmp_path / "base.menu"), has_clip)
+    assert ok == ["Yes"]
+    labels = {b[1] for b in bad}
+    assert "Water" in labels, bad
+    assert "Back" in labels, "a press with no sound= line cannot speak either"
+    assert any("sounds/food/water.mp3" in str(b[2]) for b in bad)
+
+
+def test_audit_clips_is_clean_when_everything_resolves(tmp_path):
+    (tmp_path / "m.menu").write_text("""
+[menu]
+name = M
+columns = 3
+rows = 2
+[a]
+label = A
+sound = /s/a.mp3
+position = 1
+""")
+    ok, bad = M.audit_clips(str(tmp_path / "m.menu"), lambda p: p.sound)
+    assert ok == ["A"] and bad == []
+
+
+def test_audit_clips_survives_a_submenu_loop(tmp_path):
+    """A menu that points at itself must not hang the startup check."""
+    (tmp_path / "loop.menu").write_text("""
+[menu]
+name = Loop
+columns = 3
+rows = 2
+[again]
+label = Again
+submenu = loop.menu
+position = 1
+""")
+    ok, bad = M.audit_clips(str(tmp_path / "loop.menu"), lambda p: None)
+    assert ok == [] and bad == []

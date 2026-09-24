@@ -125,3 +125,40 @@ def resolve(ref, base_dir):
     if os.path.isabs(ref):
         return ref
     return os.path.join(base_dir, ref)
+
+
+def audit_clips(path, has_clip, _seen=None):
+    """Walk a menu and every submenu it reaches; report presses that cannot speak.
+
+    MEASURED 2026-09-24: the Food & Drink submenu was entirely silent because
+    its clips live in `menus/sounds/` while only `button_sounds/` had been
+    copied to the board. Nothing errored -- the cell highlighted, the press
+    registered, and no sound came out. An AAC board that silently fails to
+    speak is worse than one that refuses to start, so the check runs up front
+    rather than waiting for a visitor to find the gap.
+
+    `has_clip(press)` returns a path or None. Returns (ok_labels, problems),
+    where each problem is (menu_name, label, reason).
+    """
+    seen = _seen if _seen is not None else set()
+    path = os.path.abspath(path)
+    if path in seen or not os.path.exists(path):
+        return [], []
+    seen.add(path)
+    m = load(path)
+    ok, bad = [], []
+    for pr in m.presses:
+        if pr.is_submenu:
+            sub = resolve(pr.submenu, os.path.dirname(path))
+            if sub:
+                a, b = audit_clips(sub, has_clip, seen)
+                ok += a
+                bad += b
+            continue
+        if not pr.sound:
+            bad.append((m.name, pr.label, "no sound= line"))
+        elif has_clip(pr):
+            ok.append(pr.label)
+        else:
+            bad.append((m.name, pr.label, pr.sound))
+    return ok, bad
