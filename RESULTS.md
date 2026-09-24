@@ -1504,3 +1504,51 @@ helps in a well-lit hall is not answered by this data.
 **Unrelated confound found and fixed:** the CPU governor was `schedutil`, not
 `performance`, which had the pipeline at 7.8 Hz against a camera capable of
 19.4. Any timing measured before that fix is void.
+
+## 2026-09-23 — the fixation protocol was measuring the subject, not the tracker
+
+`bin/fixate` showed one dot for 15 s and reported the scatter about its single
+mean. Two runs of the SAME condition then gave **153.8 px and 276.9 px** — an
+80% spread — which made any A/B meaningless.
+
+**The fault was in the statistic.** Lag-1 autocorrelation ran 0.60–0.74, so
+the signal was dominated by something slow. Nobody holds a fixation for 15 s:
+the eyes creep, the head settles, the chair moves. All of it landed in
+"tracker noise". Demonstrated on synthetic data with a known answer:
+
+| | value |
+|---|---|
+| true jitter | 42 px |
+| old whole-run statistic | **169 px** (4× inflated by drift) |
+| new per-fixation statistic | **41 px** |
+
+### What the rebuilt protocol does
+
+- **~20 short fixations, not one long hold.** ~1.5 s each, and scatter is
+  measured about *that fixation's own mean*, so drift between fixations
+  cannot contaminate it.
+- **Positions vary** across a grid. A single centre dot measures the tracker
+  where it performs best.
+- **Settle time is discarded** — the first 0.6 s after a dot moves is a
+  saccade and its overshoot, not a fixation.
+- **The run is a distribution**, and a bootstrap gives the median a
+  confidence interval.
+- **The A/B bootstraps the DIFFERENCE**, not two separate CIs. Judging
+  overlap between two intervals by eye is a different and weaker test, and it
+  is the one people do without noticing.
+
+Verified to both directions on synthetic data: 60 px vs 85 px resolves
+(CI [−39.9, −22.8]), and two draws from the same distribution do **not**
+(CI [−22.3, +11.8]) — it declines to claim a difference that is only noise.
+
+It also separates two things the old version conflated:
+
+| statistic | what it measures | what should improve it |
+|---|---|---|
+| per-fixation scatter | steadiness | illumination, iris contrast |
+| offset from the dot | accuracy | calibration quality |
+
+**Still required by the design, not optional:** run each condition at least
+twice, alternating. One run per condition cannot distinguish a lamp's effect
+from the subject getting tired over the session, and the tool now says so when
+it sees a single run.

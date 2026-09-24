@@ -1,34 +1,42 @@
 #!/usr/bin/env python3
-"""How noisy is the gaze point while the eyes are NOT moving?
+"""How steady is the gaze point while the eyes hold still? A/B-capable.
 
-The question this answers: "my eyes are not moving but the cursor jumps" --
-is that independent frame-to-frame jitter, or slow drift? They look identical
-on screen and they call for opposite fixes.
+WHY THIS WAS REBUILT. The first version showed one dot for 15 s and reported
+the scatter about its single mean. Two runs of the SAME condition then gave
+153.8 px and 276.9 px -- an 80% spread -- which made any A/B meaningless: a
+single on-versus-off comparison reports whichever way the noise fell.
 
-  INDEPENDENT jitter -> averaging N samples cuts it by sqrt(N), so a dwell
-                        UI gets precision for free and nothing else is needed.
-  CORRELATED drift   -> averaging buys almost nothing, and the answer is more
-                        pixels on the iris (closer camera, narrower lens) or
-                        online recalibration.
+The cause was in the statistic, not the tracker. Lag-1 autocorrelation ran
+0.60-0.74, i.e. the sample-to-sample signal was dominated by something slow.
+Nobody holds a fixation for 15 s; the eyes creep, the head settles, the chair
+moves. All of that landed in "tracker noise".
 
-Why this matters so much here: the whole screen is only ~14 px of iris travel,
-so the mapping multiplies iris error by about 139. One pixel of landmark noise
-is 2.8 deg of gaze. At a measured 3.27 deg the pipeline is sitting at roughly
-ONE PIXEL of iris precision, which is near the floor of what the landmark
-model does in a single frame. Whether that floor can be beaten by time is
-exactly what this measures.
+WHAT CHANGED
 
-Stare at the dot. Do not chase it, do not blink deliberately, just hold it.
+  MANY SHORT FIXATIONS, not one long one. Each dot is held for ~1.5 s after a
+  settle, and scatter is measured about THAT fixation's own mean. Drift
+  between fixations cannot contaminate it, because each is its own baseline.
 
-    bin/fixate                 calibrate, then 15 s on one point
-    bin/fixate --seconds 30    longer is better for the drift estimate
-    bin/fixate --no-cal        reuse nothing; raw feature noise only
+  POSITIONS VARY. A single centre dot measures the tracker where it is best.
+  Dots are drawn from a grid across the screen, shuffled.
+
+  THE RUN IS A DISTRIBUTION, not a point. The statistic is the median
+  per-fixation scatter over ~20 fixations, and a bootstrap gives it a
+  confidence interval -- so "is this difference real" is answerable instead
+  of guessed at.
+
+  SETTLE TIME IS DISCARDED. The first samples after a dot moves are a saccade
+  and its overshoot, not a fixation.
+
+    bin/fixate --label room_only
+    bin/fixate --label room_plus_lamp     # prints the A/B with a CI
 """
 
 import argparse
 import json
 import math
 import os
+import random
 import sys
 import time
 
@@ -41,20 +49,44 @@ from spike import backends, calib, camera, config, features, nosleep
 from spike.targets import WIN, collect_point, grid_points, shuffled
 
 
+def boot_ci(vals, stat=np.median, n=2000, alpha=0.05, rng=None):
+    """Bootstrap CI. Small samples make a point estimate look authoritative;
+    this says how much of that is warranted."""
+    if len(vals) < 3:
+        return (float("nan"), float("nan"))
+    rng = rng or np.random.default_rng(0)
+    a = np.asarray(vals, dtype=float)
+    boots = [stat(rng.choice(a, size=len(a), replace=True)) for _ in range(n)]
+    return (float(np.percentile(boots, 100 * alpha / 2)),
+            float(np.percentile(boots, 100 * (1 - alpha / 2))))
+
+
+def beep(kind=None):
+    try:
+        import subprocess
+        here = os.path.dirname(os.path.abspath(__file__))
+        subprocess.run(["python3", os.path.join(here, "beep")]
+                       + ([kind] if kind else []),
+                       capture_output=True, timeout=8)
+    except Exception:
+        pass
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seconds", type=float, default=15.0)
+    ap.add_argument("--label", required=True)
+    ap.add_argument("--fixations", type=int, default=20)
+    ap.add_argument("--hold", type=float, default=1.5,
+                    help="seconds of samples kept per fixation")
+    ap.add_argument("--settle", type=float, default=0.6,
+                    help="seconds discarded after the dot moves (saccade)")
     ap.add_argument("--points", type=int, default=9)
-    ap.add_argument("--no-cal", action="store_true",
-                    help="skip calibration; report raw iris-feature noise only")
     ap.add_argument("--windowed", action="store_true")
-    ap.add_argument("--label", default=None,
-                    help="name this condition, e.g. ir_on / ir_off; results "
-                         "append to board_artifacts/fixate.jsonl for A/B")
+    ap.add_argument("--seed", type=int, default=None)
     args = ap.parse_args()
 
-    cfg = config.load(os.path.join(os.path.dirname(os.path.dirname(
-        os.path.abspath(__file__))), "config.toml"))
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = config.load(os.path.join(root, "config.toml"))
     W, H = cfg["screen"]["width_px"], cfg["screen"]["height_px"]
     mmx = cfg["screen"]["width_mm"] / float(W)
     D = cfg["screen"]["viewing_distance_mm"]
@@ -70,184 +102,158 @@ def main():
     nosleep.hold()
     canvas = np.zeros((H, W, 3), np.uint8)
 
-    mapper = None
-    if not args.no_cal:
-        rng = np.random.default_rng(0)
-        pts, _ = shuffled(grid_points(args.points, W, H), rng)
-        X, y = [], []
-        for i, pt in enumerate(pts):
-            got = collect_point(cam, be, cfg, canvas, pt,
-                                "%d / %d" % (i + 1, len(pts)))
-            if got is None:
-                cam.close(); be.close(); cv2.destroyAllWindows(); return
-            X.append(got); y.append(pt)
-        mapper = calib.LinearMapper().fit(np.asarray(X),
-                                          np.asarray(y, dtype=float))
+    seed = args.seed if args.seed is not None else random.randrange(2 ** 31)
+    rng = np.random.default_rng(seed)
 
-    target = (W // 2, H // 2)
+    beep()
+    pts, _ = shuffled(grid_points(args.points, W, H), rng)
+    X, y = [], []
+    for i, pt in enumerate(pts):
+        got = collect_point(cam, be, cfg, canvas, pt, "%d / %d" % (i + 1, len(pts)))
+        if got is None:
+            cam.close(); be.close(); cv2.destroyAllWindows(); return
+        X.append(got); y.append(pt)
+    mapper = calib.LinearMapper().fit(np.asarray(X), np.asarray(y, dtype=float))
+
+    # Fixation targets: a wider grid than the calibration one, shuffled, and
+    # repeated until `fixations` is reached. Varying position matters -- a
+    # single centre dot measures the tracker where it performs best.
+    fix_pts, _ = shuffled(grid_points(9, W, H, margin=0.18), rng)
+    while len(fix_pts) < args.fixations:
+        more, _ = shuffled(grid_points(9, W, H, margin=0.18), rng)
+        fix_pts += more
+    fix_pts = fix_pts[:args.fixations]
+
     size = cfg["inference"]["input_size"]
-    pts_xy, feats, times = [], [], []
-    t0 = time.perf_counter()
-    while time.perf_counter() - t0 < args.seconds:
-        frame = cam.read()
-        if frame is None:
-            continue
-        fh, fw = frame.shape[:2]
-        s = float(size) / max(fh, fw)
-        small = (cv2.resize(frame, (int(fw * s), int(fh * s)),
-                            interpolation=cv2.INTER_AREA) if s < 1 else frame)
-        rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-        res = be.detect(rgb, full=None if s >= 1
-                        else cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        if not res.ok:
-            continue
-        try:
-            f, diag = features.extract(res.landmarks, rgb.shape[1], rgb.shape[0])
-        except Exception:
-            continue
-        if features.is_blinking(diag, cfg["inference"]["blink_ear_threshold"]):
-            continue
-        feats.append(f)
-        times.append(time.perf_counter())
-        if mapper is not None:
-            pts_xy.append(mapper.predict(f))
+    per_fix, kept_total, rate_n, rate_t0 = [], 0, 0, time.perf_counter()
 
-        canvas[:] = (12, 12, 16)
-        left = args.seconds - (time.perf_counter() - t0)
-        cv2.circle(canvas, target, 26, (70, 140, 220), 2, cv2.LINE_AA)
-        cv2.circle(canvas, target, 5, (245, 245, 250), -1, cv2.LINE_AA)
-        cv2.putText(canvas, "HOLD YOUR EYES ON THE DOT", (W // 2 - 380, 120),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.4, (200, 200, 210), 3, cv2.LINE_AA)
-        cv2.putText(canvas, "%.0f s   %d samples" % (left, len(feats)),
-                    (W // 2 - 140, H - 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0,
-                    (140, 140, 155), 2, cv2.LINE_AA)
-        cv2.imshow(WIN, canvas)
-        if (cv2.waitKey(1) & 0xFF) == ord('q'):
-            break
+    beep("--go")
+    for i, (tx, ty) in enumerate(fix_pts):
+        t0 = time.perf_counter()
+        samples = []
+        while True:
+            el = time.perf_counter() - t0
+            if el > args.settle + args.hold:
+                break
+            canvas[:] = (12, 12, 16)
+            phase = min(1.0, el / args.settle)
+            r = int(30 - 16 * phase)
+            col = (245, 245, 250) if el >= args.settle else (90, 140, 200)
+            cv2.circle(canvas, (tx, ty), r, (70, 140, 220), 2, cv2.LINE_AA)
+            cv2.circle(canvas, (tx, ty), 5, col, -1, cv2.LINE_AA)
+            cv2.putText(canvas, "%d / %d" % (i + 1, len(fix_pts)),
+                        (W // 2 - 60, 70), cv2.FONT_HERSHEY_SIMPLEX, 1.0,
+                        (120, 120, 135), 2, cv2.LINE_AA)
+            cv2.imshow(WIN, canvas)
+            if (cv2.waitKey(1) & 0xFF) == ord('q'):
+                cam.close(); be.close(); cv2.destroyAllWindows(); return
+
+            frame = cam.read()
+            if frame is None:
+                continue
+            rate_n += 1
+            fh, fw = frame.shape[:2]
+            s = float(size) / max(fh, fw)
+            small = (cv2.resize(frame, (int(fw * s), int(fh * s)),
+                                interpolation=cv2.INTER_AREA) if s < 1 else frame)
+            res = be.detect(cv2.cvtColor(small, cv2.COLOR_BGR2RGB),
+                            full=None if s >= 1
+                            else cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            if not res.ok:
+                continue
+            try:
+                f, diag = features.extract(res.landmarks, small.shape[1],
+                                           small.shape[0])
+            except Exception:
+                continue
+            if features.is_blinking(diag, cfg["inference"]["blink_ear_threshold"]):
+                continue
+            if el < args.settle:          # saccade and overshoot: discard
+                continue
+            samples.append(mapper.predict(f))
+
+        if len(samples) >= 5:
+            P = np.asarray(samples)
+            # Scatter about THIS fixation's own mean. Drift between fixations
+            # cannot leak in, which is the whole point of the rebuild.
+            sd = float(np.hypot(P[:, 0].std(), P[:, 1].std()))
+            off = float(np.hypot(P[:, 0].mean() - tx, P[:, 1].mean() - ty))
+            per_fix.append(dict(n=len(samples), scatter_px=sd, offset_px=off,
+                                tx=tx, ty=ty))
+            kept_total += len(samples)
 
     cam.close(); be.close(); cv2.destroyAllWindows()
+    beep("--done")
 
-    F = np.asarray(feats)
-    if len(F) < 30:
-        print("only %d samples -- not enough" % len(F)); return
-    dt = np.diff(times)
-    rate = 1.0 / np.median(dt)
-    print("\n%d samples over %.1f s  (%.1f Hz)" % (len(F), times[-1] - times[0], rate))
-
-    # --- raw feature noise, in the units the mapping actually consumes -------
-    print("\nRAW IRIS FEATURE NOISE (normalised units, and what they cost):")
-    fx = 1366.05 * cfg["camera"]["width"] / 1920.0
-    for i, nm in enumerate(("l_iris_x", "l_iris_y", "r_iris_x", "r_iris_y")):
-        sd = F[:, i].std()
-        print("  %-10s sd %.5f" % (nm, sd))
-
-    if not pts_xy:
+    if len(per_fix) < 5:
+        print("only %d usable fixations -- not enough" % len(per_fix))
         return
 
-    P = np.asarray(pts_xy)
-    r = np.hypot(P[:, 0] - P[:, 0].mean(), P[:, 1] - P[:, 1].mean())
-    deg = np.degrees(np.arctan(r * mmx / D))
-    print("\nGAZE POINT SCATTER ABOUT ITS OWN MEAN (this is the jumpiness):")
-    print("  sd  x %.0f px   y %.0f px" % (P[:, 0].std(), P[:, 1].std()))
-    print("  radial p50 %.0f px (%.2f deg)   p95 %.0f px (%.2f deg)"
-          % (np.percentile(r, 50), np.percentile(deg, 50),
-             np.percentile(r, 95), np.percentile(deg, 95)))
+    rate = rate_n / max(1e-6, time.perf_counter() - rate_t0)
+    sc = [f["scatter_px"] for f in per_fix]
+    off = [f["offset_px"] for f in per_fix]
+    lo, hi = boot_ci(sc)
 
-    # --- the decisive part: does averaging actually help? -------------------
-    #
-    # If samples are independent, the sd of a block mean falls as 1/sqrt(N).
-    # If they are correlated -- slow drift rather than jitter -- it falls much
-    # more slowly, and a dwell UI gains almost nothing by waiting.
-    print("\nDOES AVERAGING HELP? sd of the mean of N consecutive samples:")
-    print("  %4s %8s %10s %10s %s" % ("N", "ms", "sd px", "ideal", "verdict"))
-    base = None
-    for n in (1, 2, 4, 8, 16, 32):
-        if len(P) < n * 4:
-            break
-        k = len(P) // n
-        blocks = P[:k * n].reshape(k, n, 2).mean(axis=1)
-        sd = float(np.hypot(blocks[:, 0].std(), blocks[:, 1].std()))
-        if base is None:
-            base = sd
-        ideal = base / math.sqrt(n)
-        ratio = sd / ideal if ideal > 0 else float("inf")
-        verdict = ("independent" if ratio < 1.3 else
-                   "partly correlated" if ratio < 2.0 else "CORRELATED - drift")
-        print("  %4d %8.0f %10.1f %10.1f %s"
-              % (n, 1000.0 * n / rate, sd, ideal, verdict))
+    def deg(px):
+        return math.degrees(math.atan(px * mmx / D))
 
-    # Lag-1 autocorrelation is the same question asked directly.
-    for j, nm in (("x", 0), ("y", 1))[:0]:
-        pass
-    for nm, j in (("x", 0), ("y", 1)):
-        v = P[:, j] - P[:, j].mean()
-        ac = float(np.corrcoef(v[:-1], v[1:])[0, 1])
-        print("  lag-1 autocorrelation %s: %+.2f  (%s)"
-              % (nm, ac, "independent jitter" if abs(ac) < 0.3
-                 else "correlated -- drift or tracking, not noise"))
+    print("\n%s: %d fixations, %d samples, %.1f Hz"
+          % (args.label, len(per_fix), kept_total, rate))
+    print("\nPER-FIXATION SCATTER (steadiness -- what a lamp should improve):")
+    print("  median %.1f px (%.2f deg)   95%% CI [%.1f, %.1f]"
+          % (np.median(sc), deg(np.median(sc)), lo, hi))
+    print("  IQR %.1f-%.1f px   worst %.1f"
+          % (np.percentile(sc, 25), np.percentile(sc, 75), max(sc)))
+    print("\nOFFSET FROM THE DOT (accuracy -- what calibration should improve):")
+    print("  median %.1f px (%.2f deg)" % (np.median(off), deg(np.median(off))))
 
-    # --- iris-region contrast, the thing an IR lamp is meant to change ----
-    #
-    # Brightness alone does not predict landmark quality -- that was measured
-    # for the rim detector and it holds here. What should matter is how well
-    # the iris stands out from the sclera, because that edge is what the
-    # landmark model localises. Report it so "the picture looks brighter" and
-    # "the tracker got better" cannot be confused.
-    res = {}
-    if args.label:
-        res = dict(
-            label=args.label,
-            when=time.strftime("%Y-%m-%dT%H:%M:%S"),
-            n=len(F),
-            rate=round(rate, 1),
-            iris_sd=[round(float(F[:, i].std()), 5) for i in range(4)],
-        )
-        if pts_xy:
-            res["scatter_px_p50"] = round(float(np.percentile(r, 50)), 1)
-            res["scatter_deg_p50"] = round(float(np.percentile(deg, 50)), 3)
-            res["sd_x"] = round(float(P[:, 0].std()), 1)
-            res["sd_y"] = round(float(P[:, 1].std()), 1)
-            k = 8
-            if len(P) >= k * 4:
-                kk = len(P) // k
-                blocks = P[:kk * k].reshape(kk, k, 2).mean(axis=1)
-                res["sd_mean_of_8"] = round(
-                    float(np.hypot(blocks[:, 0].std(), blocks[:, 1].std())), 1)
-            v = P[:, 0] - P[:, 0].mean()
-            res["autocorr_x"] = round(float(np.corrcoef(v[:-1], v[1:])[0, 1]), 3)
-        out = os.path.join(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__))), "board_artifacts", "fixate.jsonl")
-        try:
-            os.makedirs(os.path.dirname(out), exist_ok=True)
-            with open(out, "a") as fh:
-                fh.write(json.dumps(res) + "\n")
-            print("\nappended %r to %s" % (args.label, out))
-        except Exception as e:
-            print("\ncould not append: %s" % e)
+    res = dict(label=args.label, when=time.strftime("%Y-%m-%dT%H:%M:%S"),
+               seed=seed, fixations=len(per_fix), samples=kept_total,
+               rate=round(rate, 1),
+               scatter_median=round(float(np.median(sc)), 1),
+               scatter_ci=[round(lo, 1), round(hi, 1)],
+               scatter_deg=round(deg(float(np.median(sc))), 3),
+               offset_median=round(float(np.median(off)), 1),
+               per_fixation=[round(v, 1) for v in sc])
+    out = os.path.join(root, "board_artifacts", "fixate.jsonl")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "a") as fh:
+        fh.write(json.dumps(res) + "\n")
+    print("\nappended %r to %s" % (args.label, out))
 
-        # If there is a previous run under a different label, diff them now --
-        # an A/B you have to go and compute yourself is an A/B nobody computes.
-        try:
-            prev = [json.loads(l) for l in open(out)]
-            others = [x for x in prev[:-1] if x.get("label") != args.label
-                      and x.get("scatter_px_p50")]
-            if others and res.get("scatter_px_p50"):
-                o = others[-1]
-                a, b = o["scatter_px_p50"], res["scatter_px_p50"]
-                print("\nA/B  %-10s %6.1f px" % (o["label"], a))
-                print("     %-10s %6.1f px   -> %+.0f%%"
-                      % (args.label, b, 100.0 * (b - a) / max(a, 1e-6)))
-                print("     (fixation scatter; LOWER is better. This, not"
-                      " brightness, is the thing that matters.)")
-        except Exception:
-            pass
-
-    print("\nREAD IT LIKE THIS:")
-    print("  independent  -> average over the dwell. 8 samples is 0.5 s and")
-    print("                  cuts the error by 2.8x for free.")
-    print("  correlated   -> averaging will NOT help. The answer is more")
-    print("                  pixels on the iris: move the camera closer, or")
-    print("                  a narrower lens. See PLAN.md Path C.")
+    # --- A/B against every previous run under other labels ------------------
+    prev = [json.loads(l) for l in open(out) if '"per_fixation"' in l]
+    mine = [p for p in prev if p["label"] == args.label]
+    others = {}
+    for p in prev:
+        if p["label"] != args.label:
+            others.setdefault(p["label"], []).append(p)
+    if others:
+        a = [v for p in mine for v in p["per_fixation"]]
+        print("\nA/B  (per-fixation scatter, pooled; LOWER is better)")
+        print("  %-18s %7s %7s %s" % ("condition", "median", "n", "95% CI"))
+        print("  %-18s %7.1f %7d [%.1f, %.1f]"
+              % (args.label, np.median(a), len(a), *boot_ci(a)))
+        rng2 = np.random.default_rng(1)
+        for lab, runs in others.items():
+            b = [v for p in runs for v in p["per_fixation"]]
+            print("  %-18s %7.1f %7d [%.1f, %.1f]"
+                  % (lab, np.median(b), len(b), *boot_ci(b)))
+            # Bootstrap the DIFFERENCE. Overlapping CIs on two medians is not
+            # the same test, and is the one people do by eye and get wrong.
+            d = [np.median(rng2.choice(a, len(a), True))
+                 - np.median(rng2.choice(b, len(b), True)) for _ in range(2000)]
+            dlo, dhi = np.percentile(d, [2.5, 97.5])
+            verdict = ("REAL: %s is steadier" % (args.label if np.median(d) < 0 else lab)
+                       if (dlo > 0) == (dhi > 0) else
+                       "NOT RESOLVED -- the interval spans zero")
+            print("      difference %+.1f px, 95%% CI [%+.1f, %+.1f]  -> %s"
+                  % (np.median(d), dlo, dhi, verdict))
+        if len(mine) < 2:
+            print("\n  Only one run of %r. Run each condition at least twice,"
+                  % args.label)
+            print("  ALTERNATING, or a drift in the subject over the session")
+            print("  is indistinguishable from an effect of the lamp.")
 
 
 if __name__ == "__main__":
