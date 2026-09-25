@@ -2,6 +2,18 @@
 
 Last updated: **2026-09-24** — board left RUNNING, kiosk menu up on the display.
 
+> **THE BOARD CRASHED TWICE on the evening of 2026-09-24.** `last -x reboot`
+> shows boots at 22:37 and 23:24 both ending in `crash`, and the 23:54 boot
+> is the one now up. No cause found: **no** undervoltage or over-current in
+> `dmesg`, **no** OOM, temps 42-47 C, 2.4 GB free. Nothing was being pushed
+> at the time. Two unexplained crashes in one evening is a faire risk in its
+> own right -- **check `last -x reboot` at the START of the next session**,
+> and if it has grown, treat power first (the board wants 5V @ 3A, and
+> undervoltage on this hardware presents as random instability that reads
+> like a software bug). The governor was reset to `performance` after the
+> last boot; it reverts to `schedutil` on EVERY reboot, so any timing taken
+> across one of these crashes is void.
+
 ## The 60-second version
 
 The **glasses-rim fiducial now measures distance on real hardware** and does
