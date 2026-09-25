@@ -1,6 +1,6 @@
 # RESTART — read this first after a crash or power loss
 
-Last updated: **2026-09-23** — hardware packed up after this session.
+Last updated: **2026-09-24** — board left RUNNING, kiosk menu up on the display.
 
 ## The 60-second version
 
@@ -21,13 +21,14 @@ numbers; this is the orientation.
 | Gate 1c bare-faced | **DONE — 3.27 deg / 5.56 p95 -> PATH B.** Repeat in good light. |
 | red lamp | **WORKS — 3.2x steadier, CI excludes zero, reproduced in the game. USE IT.** |
 | fixation protocol | **REBUILT** — the old one measured the subject's drift, not the tracker |
-| faire kiosk | `bin/menu` + `tools/setup_kiosk.sh` built, **NOT hardware-tested** |
+| faire kiosk | **RUNS on hardware** — auto-login confirmed, menu up, all three rows launch |
+| kiosk with NO KEYBOARD | **fixed 2026-09-24** — every app can now be left by mouse alone. Untested by hand. |
 | calibration FIT | **two bugs found and fixed** — see below. This is where the gain came from, not the glasses. |
 | the model | **linear (7 par) beats degree-2 (66 par) at every point count tried** |
 | bunny game | seats the player before calibrating; linear always; see its `GAZE.md` |
 | `DIGEST.md` | portable ~8 KB summary for claude.ai / a fresh chat. **Re-upload when findings land.** |
 
-Suite is **174 passing**, no hardware needed.
+Suite is **195 passing** here, 194 + 1 skip on the board. No hardware needed.
 
 ## What changed this session, and what it means
 
@@ -314,8 +315,9 @@ is not representative of a fresh visitor.
 
 ## Faire kiosk: auto-login into a menu
 
-Built 2026-09-23, **NOT yet tested on hardware** — the board was packed away.
-Tomorrow: deploy, then test.
+Built 2026-09-23, **deployed and running 2026-09-24**. Auto-login works and
+all three rows launch. What it lacked was any way *back* without a keyboard;
+see § "the kiosk ran, and had no way out of anything".
 
     tools/setup_kiosk.sh            # dry run, shows what it would change
     tools/setup_kiosk.sh --apply    # autologin + autostart
@@ -348,6 +350,76 @@ a desktop.
 **Both talkers already take mouse button, SPACE and ENTER** to speak a word:
 `fire = k in (32, 13, 10) or mouse["click"]` in `bin/talker`. No change was
 needed there.
+
+**Leaving an activity is now mouse-only too**, which it was not on the day:
+right/middle-click for the talker's home board, an `exit` chip on it, and an
+`X` in the bunny game. The menu's own Q-then-Y quit is still a keyboard
+chord — that is deliberate, it drops to the desktop and a visitor should not
+find it.
+
+## 2026-09-24: the kiosk ran, and had no way out of anything
+
+The kiosk was deployed and auto-login works. Then every activity turned out
+to be a **one-way trip for anyone without a keyboard**, which is the actual
+faire configuration. All four holes are fixed; **none has been tested by
+hand yet** — that is the first thing to do next session.
+
+| was | now |
+|---|---|
+| talker **Back** cell did nothing | works |
+| no way home from a talker submenu | **right- or middle-click**, any depth |
+| talker exited on `q` only | small **`exit` chip**, top right of the HOME board |
+| bunny game exited on ESCAPE only | small **`X`**, bottom right, every phase |
+
+**The Back cell was a parsing bug, not a UI one.** The `.menu` format marks
+the back cell with a BARE `back =` key -- an empty value whose PRESENCE is
+the entire signal -- and names the destination separately as `[menu] back =
+<file>`. `spike/menu.py` read neither, so Back arrived as a press with no
+`sound=` and no `submenu=`: it highlighted, accepted a press, and fell
+through to `voice.say()` with nothing to say. Parse that key by MEMBERSHIP;
+a `.get()` there is the bug. The `b` key worked the whole time, which is
+exactly why it reached the board.
+
+**The trap that cost the most time: `cv2.WINDOW_GUI_EXPANDED` is ZERO.**
+This OpenCV is built `GUI: QT5`. Passing a bare `cv2.WINDOW_NORMAL` to
+`namedWindow` therefore selects the *expanded* Qt chrome, and Qt grabs
+right-click for its own "Save image" popup -- a dialog that blocks the app
+and needs a keyboard to dismiss. Both kiosk windows now pass
+`WINDOW_NORMAL | WINDOW_GUI_NORMAL`. Nothing raises without it and no unit
+test can click a mouse, so `test_kiosk_windows_disable_the_qt_context_menu`
+asserts it in the source of both bins. **Check this first if right-click
+ever stops working.**
+
+**Every exit is guarded the same way, deliberately, so there is one habit:**
+
+- **Mouse only, never gaze.** In the talker the chip takes a left-click and
+  ignores dwell. In the game, gaze emits `"fire"` and only `"down"` reaches
+  `_on_click`, so staring at the corner cannot close it. Do not "helpfully"
+  route fire to either.
+- **Two clicks.** First arms (turns red, reads `SURE?` / `SURE`), second
+  within 4 s leaves, any other click disarms.
+- **Small and cornered.** Gaze p95 is ~164 px, so a chip of that order in
+  the corner is out of a visitor's reach and trivial for the operator's
+  mouse. **That asymmetry IS the guard** -- enlarging either button to look
+  friendlier hands the exit to the person in the chair.
+
+**The game's white face-light border is OFF** (`GAZE_LIGHT_BORDER = 0`). It
+predated the lamp, and the lamp measured 3.2x steadier -- far more than a
+12 px rim of white could buy. Kept, not deleted: raise it and the frame
+comes back if a booth ever loses the lamp. `GAZE_PLAY_BRIGHTEN = 24` is
+**still on** and is the same idea; it is a candidate to go the same way.
+
+**Two things that only showed up by looking at a rendered frame:** the
+game's close button was first drawn *underneath* the carrot inventory, and
+the talker's chip had to be checked against the grid at four screen sizes.
+Neither errors. Render the frame headless and look at it --
+`SDL_VIDEODRIVER=dummy` on the board for the game, `cv2.imwrite` for the
+talker.
+
+**A leak worth recognising:** a `timeout 10 python3 bin/talker ...` left two
+processes alive **28 minutes later**, holding the display next to the
+kiosk. `timeout` killed the wrapper, not the child. If that shape is in a
+script it will recur at the faire.
 
 ## The lamp WORKS — measured 2026-09-23, two instruments agree
 
@@ -454,6 +526,11 @@ Try both; they are different images and the landmark model may prefer either.
 
 ## Still open, roughly in priority order
 
+0. **Test the four kiosk exits by hand** — 5 minutes, and nothing else on
+   this list matters if a visitor can strand the booth. Talker: Back cell in
+   Food & Drink, right-click home from a submenu, the `exit` chip (two
+   clicks). Game: the `X`, bottom right (two clicks). All four were written
+   2026-09-24 and **not one has been pressed by a human**.
 1. **Repeat Gate 1c in good light.** 3 minutes, and it is what the whole
    schedule now rests on. The 3.27 deg run was at face brightness **55.4**
    against the **128.7** measured earlier the same evening; a dim iris is a
