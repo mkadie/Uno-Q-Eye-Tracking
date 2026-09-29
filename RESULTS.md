@@ -1,3 +1,53 @@
+# Maker Faire, 2026-09-27 — 137 visitors, 2732 throws
+
+The first data from people who are not the developer. `analyse_study.py` over
+`study_data/bff_gaze_study.jsonl`.
+
+| | |
+|---|---|
+| sessions / throws | **137 / 2732** |
+| valid after auto-flags | 1478 (**54%**) |
+| accuracy p50 / p95 | **6.26 deg / 20.60 deg** |
+| worst | 49.16 deg |
+| bias | -6.3, 2.7 px |
+| scatter about the bias | x 88 px, y 62 px |
+| seating p50 | 495 mm (p5-p95 394-637) |
+
+**6.26 deg is the honest headline, not 3.27.** One practised subject who knows
+to hold still is not the population, and the gap between those two numbers is
+the size of that difference.
+
+**Accuracy decays with movement away from the calibration distance.** Stayed
+put (|d| <= 18 mm): 5.30 deg (n=735). Moved: 8.93 deg (n=736). **Half of all
+visitors moved.** Recalibrate on a shift; do not read this decay as tracker
+noise.
+
+**The error is bias/drift-dominated, not jitter.** Per-throw fixation scatter
+24 px p50 against an error scatter of 88 x 62 px -- ratio **0.22**. Averaging
+over a dwell will NOT rescue it. The gain has to come from calibration, not
+filtering, which is the opposite of what the steadiness result suggests alone.
+
+**The auto-flags dropped 43% of throws and moved p50 by only -0.46 deg.** A
+filter eating a third of the data while barely changing the answer is largely
+measuring itself. `head_turned` 538, `face_lost` 511, `head_pitched` 348,
+`bad_distance` 302. Median error of EXCLUDED throws was 7.08 vs 6.26 kept --
+close enough that the flags are not separating good from bad very sharply.
+Read the counts as a description of a faire crowd, not of the tracker.
+
+**One row has dist_mm = -509.5 and is NOT flagged.** A physically impossible
+seating distance reached the summary. One row in 1964 changes nothing, but a
+guard that misses a *negative* distance will miss a merely wrong one, and
+those do not announce themselves.
+
+**The log was crash-damaged and nearly unreadable.** Line 1633 came back with
+234 NUL bytes spliced in front of it -- ext4 had allocated the block but the
+write never landed. `json.loads` died on it and took all 137 sessions with
+it. Stripping the NULs recovers the line intact, so nothing was lost, but
+`analyse_study.load()` now skips unparsable lines and **prints the count**.
+
+**Not yet done:** per-visitor breakdown, learning within a session, and
+whether 9 points + linear held up in a queue.
+
 # Results
 
 Measurements from the actual board. Written as they arrive, because by

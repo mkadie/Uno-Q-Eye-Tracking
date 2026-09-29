@@ -1,6 +1,12 @@
 # RESTART — read this first after a crash or power loss
 
-Last updated: **2026-09-24** — board left RUNNING, kiosk menu up on the display.
+Last updated: **2026-09-29** — the faire is DONE and its data is off the board.
+
+> **THE FAIRE RAN 2026-09-27: 137 visitors, 2732 throws, p50 6.26 deg.** The
+> data is pulled to `study_data/bff_gaze_study.jsonl` (it existed ONLY on a
+> board that has crashed repeatedly -- back it up first, always). Headline and
+> caveats are in `RESULTS.md`; only the headline has been read. Deadline is
+> **30 Sep 2026**, i.e. tomorrow.
 
 > **THE BOARD CRASHED TWICE on the evening of 2026-09-24.** `last -x reboot`
 > shows boots at 22:37 and 23:24 both ending in `crash`, and the 23:54 boot
@@ -562,9 +568,12 @@ Try both; they are different images and the landmark model may prefer either.
    reverses it. **Re-measure before acting on either number.**
 6. Bare-face-mesh column of update.md's ladder table — never run.
 7. Re-upload `DIGEST.md` to Drive / the claude.ai Project after any of the
-   above lands. It is a snapshot, not a link:
-   `unoq-gaze-spike-DIGEST-2026-09-21.md`, Drive id
-   `1rSTHsraQPg67hCuDUFLwDKOEwAHhPRCN`.
+   above lands. It is a snapshot, not a link. **Current: 2026-09-29**, Drive
+   id `1z-druXXDk5locElFjpZhZ0H7vacbLdl5`, in the `claude/sip-n-puff/unoq`
+   folder (`14dd62Ji4FD4DmqHKwKH1Gudv-42MTLsO`). Superseded snapshots go to
+   `unoq-gaze-spike ARCHIVE` (`1aWFUXOeGpNTzXl0Z_753VCpgFIlam_Ry`), renamed
+   `SUPERSEDED <date> ... (do not use as current)` -- 09-21 and 09-23 are
+   both there.
 
 ## Where we are right now
 

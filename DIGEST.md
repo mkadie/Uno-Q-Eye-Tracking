@@ -6,7 +6,7 @@ project knowledge, a fresh chat, a collaborator). Everything here is
 RESULTS.md, RESTART.md, GLASSES.md, PLAN.md — stay in the repo; this is the
 subset that travels.
 
-Last updated **2026-09-23**.
+Last updated **2026-09-29**.
 
 ## The project in five lines
 
@@ -18,6 +18,47 @@ the UNO Q is a sensor that streams gaze over UART, so the tracker is a bolt-on
 for people who already built the sip-n-puff rather than a rewrite.
 
 ## Where it stands
+
+**THE FAIRE HAPPENED. 137 visitors, 2732 throws, 2026-09-27.** This is the
+first data from people who are not the developer, and it is the single most
+important thing in this document. Headline, from the project's own
+`analyse_study.py`:
+
+| | |
+|---|---|
+| sessions / throws | **137 / 2732** |
+| valid after auto-flags | 1478 (**54%**) |
+| accuracy p50 / p95 | **6.26° / 20.60°** |
+| seating p50 | 495 mm (p5–p95 **394–637**) |
+
+**Read that 6.26° against the developer's 3.27° and believe the 6.26.** One
+practised subject who knows to hold still is not the population. Two findings
+carry more weight than the headline:
+
+- **Accuracy decays with movement away from the calibration distance.**
+  Stayed put (≤18 mm): **5.30°** (n=735). Moved: **8.93°** (n=736). Half of
+  all visitors moved. Re-calibrate on a shift; do not read this decay as
+  tracker noise.
+- **The error is bias/drift-dominated, not jitter.** Per-throw fixation
+  scatter is 24 px p50 against an error scatter of 88 × 62 px — a ratio of
+  **0.22**. So averaging over a dwell will **not** rescue it; the gain has to
+  come from calibration, not filtering. This is the opposite of what the
+  steadiness work would suggest on its own.
+
+**The auto-flags dropped 43% of throws and moved p50 by only −0.46°.** A
+filter eating a third of the data while barely changing the answer is
+measuring itself — `head_turned` (538) and `face_lost` (511) dominate.
+Believe the exclusion counts as a description of a faire, not of the tracker.
+
+**One row carries a distance of −509.5 mm and is NOT flagged** — the
+`bad_distance` guard let a physically impossible seating distance through into
+the summary. One row in 1964 changes no conclusion, but a guard that misses a
+*negative* distance will miss a merely wrong one, and those do not announce
+themselves.
+
+**NOT YET DONE on this data:** per-visitor breakdown, learning-within-session,
+and whether the 9-point linear grid held up in a queue. The file is
+`study_data/bff_gaze_study.jsonl`.
 
 **Gate 1c bare-faced: 3.27° mean / 5.56° p95** (26 held-out targets). Against
 `PLAN.md`'s fork — Path B is fps ≥ 15 and 2.0–3.5° — that is **Path B: build
@@ -244,6 +285,46 @@ target that *moves*. A talker AAC cell is 640×540 px and stationary, so that
 figure is a floor rather than a ceiling. Measuring it on the 3×2 board is the
 test that would actually decide the interface.
 
+## Crash-damaged logs, and the board's stability
+
+**The board crashed repeatedly through the faire week** (2026-09-24 twice,
+more on 09-27), with **no cause visible**: no undervoltage or over-current in
+`dmesg`, no OOM, temps 42–47 °C, memory free. Two consequences worth carrying:
+
+- **A crash can splice NUL bytes into an open log.** Line 1633 of the faire
+  data came back as 234 NULs spliced in front of an otherwise intact record
+  — ext4 had allocated the block but the write never landed. `json.loads`
+  died on it and **took all 137 sessions with it**. Stripping the NULs
+  recovers that line whole, so nothing was actually lost, but a loader that
+  dies on one damaged byte run can cost a whole faire. Skip bad lines and
+  **print the count** — a silently shortened dataset is the failure nobody
+  questions.
+- **The CPU governor reverts to `schedutil` on every boot**, so a crash
+  silently voids any timing measured across it.
+
+## The kiosk: every activity must be escapable by mouse alone
+
+Built and running with auto-login. The faire configuration has **no
+keyboard**, and on the day every activity was a one-way trip: the talker's
+Back cell did nothing, the talker exited only on `q`, and the game only on
+ESCAPE. All fixed 2026-09-24.
+
+**The trap worth carrying to any OpenCV kiosk: `cv2.WINDOW_GUI_EXPANDED` is
+ZERO.** On a Qt5 build, passing a bare `cv2.WINDOW_NORMAL` to `namedWindow`
+therefore selects the *expanded* chrome, and Qt grabs right-click for its own
+"Save image" popup — a dialog that blocks the app and needs a keyboard to
+dismiss. Pass `WINDOW_NORMAL | WINDOW_GUI_NORMAL`. Nothing raises without it.
+
+**Size a destructive control against the gaze error on purpose.** Gaze p95 is
+~164 px, so an exit chip of that order in a screen corner is out of reach of a
+visitor's wandering gaze and trivial for an operator's mouse. That asymmetry
+is the guard; enlarging it to look friendlier hands the exit to the person in
+the chair. Both exits also take a mouse click only — never a dwell — and need
+a second click to confirm.
+
+**The game's white face-light border is off.** It predated the lamp, and the
+lamp measured 3.2× steadier — far more than a 12 px rim of white could buy.
+
 ## Open
 
 1. Repeat Gate 1c in good light — the 3.27° run was dim (face 55.4 vs 128.7).
@@ -266,3 +347,9 @@ test that would actually decide the interface.
    actual display, so a board that comes up at 1024x768 is not drawn broken.
 8. Repeat the 3.27 deg accuracy run in good light. The schedule still rests on
    one dim-light run sitting 0.23 deg inside a decision boundary.
+9. **Analyse the faire data properly** — 137 sessions are loaded and only the
+   headline has been read. Per-visitor breakdown, learning within a session,
+   and whether 9 points + linear held up in a queue.
+10. **Find the crashes.** No cause in `dmesg` across several. Power is the
+   first suspect (the board wants 5V @ 3A, and undervoltage here presents as
+   random instability that reads like a software bug).
