@@ -9,6 +9,37 @@ tight, and to produce the numbers that decide the design. Guessing at fps and
 accuracy and then discovering the truth in week five is how projects miss
 deadlines.
 
+## Results, measured
+
+Tested on the public at Maker Faire Bay Area, 25–26 September 2026 —
+**125 visitors, 2413 throws.**
+
+| | |
+|---|---|
+| median gaze error, visitors | **6.26°** (p95 20.60°) |
+| median gaze error, practised subject | 3.27° |
+| best single visitor | **2.11°** — head held still by a companion |
+| visitors at ≤10° median | **87%** |
+| **visitors who got nothing at all** | **10%** |
+| throughput | 18–25 fps, no NPU, no infrared |
+| calibration | 9 points, 7-parameter linear fit |
+
+**Head turn is a cliff, not a slope.** Valid tracking holds near 71% out to
+15° of head rotation and collapses to **5% beyond 20°** — past that the
+camera is looking at one eye and the tracker does not degrade, it stops.
+Every one of the visitors who got nothing sat beyond that line. Head pitch
+behaves identically (72% → 4%).
+
+**Accuracy decays with movement away from where you calibrated** — 5.30° if
+the visitor stayed within 18 mm, 8.93° if they moved, and half of them moved.
+
+**The remaining error is bias and drift, not jitter** (per-throw scatter is
+0.22 of the error scatter), so averaging over a dwell will not rescue it.
+The gain has to come from calibration, not filtering.
+
+Full numbers, methods and the things that turned out to be wrong are in
+[`RESULTS.md`](RESULTS.md); the portable summary is [`DIGEST.md`](DIGEST.md).
+
 ## What it answers
 
 1. **Does the inference stack run on this board at all?** (`bin/probe`)
@@ -25,7 +56,7 @@ Run them in that order. Each one gates the next.
 ./bin/probe         # go / no-go
 ./bin/bench --sweep # fps vs input size — sit in front of the camera
 ./bin/calibrate     # accuracy in degrees, and what it means for your UI
-pytest tests/ -q    # 85 tests, no hardware needed
+pytest tests/ -q    # 195 tests, no hardware needed
 ```
 
 ## The architecture, and why
@@ -243,3 +274,48 @@ in the chain, and PD negotiation is exactly what fails intermittently at 6am.
 Keep `bin/calibrate` output from every session. A plot of accuracy over time,
 with and without online recalibration, is the strongest single figure this
 project could put in front of a judge.
+
+## Data, images and privacy
+
+`study_data/bff_gaze_study.jsonl` holds the Maker Faire sessions. It contains
+**no names, faces, images or audio** — only gaze coordinates, head angles,
+distances and timings, one row per carrot thrown. It is published so the
+numbers above can be checked.
+
+The camera frames in `board_artifacts/` were shot in the developer's home and
+have been de-identified by [`tools/deidentify.py`](tools/deidentify.py): the
+face and the drawn annotations are kept, everything else is downsampled to
+1/44 scale and then blurred. Pixels are discarded rather than smoothed,
+because a Gaussian blur alone is partly invertible. The raw frames inside the
+`rims_*.npz` captures got the same treatment — they are unannotated shots of
+the same room, so de-identifying only the PNGs would have been theatre.
+
+**One consequence for reproducibility:** rim detection re-run on the
+published `.npz` frames will find fewer spurious background candidates than
+the original analysis did, because the background clutter that produced them
+is gone. The false-positive findings in `RESULTS.md` were measured on the
+unmodified frames.
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE.md) — free for any noncommercial
+purpose, including personal projects, research, education, and use by
+charities, schools and public institutions. Commercial use requires a
+separate license.
+
+**This is a source-available license, not an OSI-approved open source one.**
+The Open Source Definition requires that a license not restrict any field of
+endeavour, so any "noncommercial" clause falls outside it. If you need
+OSI-approved terms, ask.
+
+Third-party components keep their own licenses — see the end of
+[`LICENSE.md`](LICENSE.md).
+
+## Who this is for
+
+This exists so that the sip-n-puff assistive device built by
+[R.O.A.R. / TSSFAA](https://tssfaa.com) can gain eye tracking as a **bolt-on**
+rather than a rewrite. The breath board stays the USB HID endpoint; the UNO Q
+is a sensor that streams gaze coordinates over UART. That choice is
+deliberate and is documented in `CLAUDE.md`, so existing builds are not
+orphaned.
