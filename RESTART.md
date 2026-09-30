@@ -758,8 +758,15 @@ Try both; they are different images and the landmark model may prefer either.
    id `1hmITrRAye9SEDZUzc4vJG6_IosblVOpa`, in the `claude/sip-n-puff/unoq`
    folder (`14dd62Ji4FD4DmqHKwKH1Gudv-42MTLsO`). Superseded snapshots go to
    `unoq-gaze-spike ARCHIVE` (`1aWFUXOeGpNTzXl0Z_753VCpgFIlam_Ry`), renamed
-   `SUPERSEDED <date> ... (do not use as current)` -- 09-21 and 09-23 are
-   both there. The measurement report is a Claude Doc, not Drive:
+   `SUPERSEDED <date> ... (do not use as current)` -- 09-21, 09-23 and 09-29
+   are all there. **Current Drive set, in `claude/sip-n-puff/unoq`:**
+   `unoq-gaze-spike-DIGEST-2026-09-30.md` (id
+   `16wXqKmXf63I4N1qgZqkShE9U7AG5CKNO`) and
+   `unoq-gaze-spike-WRITEUP-NOTES-2026-09-30.md` (id
+   `1TOO6i8WYOA8-qHmDs8ILlCzawigRacFT`). Figures, the 1.7 MB study data and
+   the full RESULTS.md are NOT copied to Drive on purpose -- they live in the
+   public repo, versioned and always current, where a Drive snapshot would go
+   stale. The write-up notes link to them. The measurement report is a Claude Doc, not Drive:
    https://claude.ai/artifact/DZrdz44qiA5NHy175mNJed -- it carries the faire
    section and is updated alongside this file.
 
