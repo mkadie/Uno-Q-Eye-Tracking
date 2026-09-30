@@ -6,7 +6,7 @@ project knowledge, a fresh chat, a collaborator). Everything here is
 RESULTS.md, RESTART.md, GLASSES.md, PLAN.md — stay in the repo; this is the
 subset that travels.
 
-Last updated **2026-09-29**.
+Last updated **2026-09-30**.
 
 ## The project in five lines
 
@@ -16,6 +16,50 @@ Debian. Deadline **30 Sep 2026**, DigiKey/Arduino Dream Lab contest. A separate
 CircuitPython board does breath sensing and **stays the USB HID endpoint** —
 the UNO Q is a sensor that streams gaze over UART, so the tracker is a bolt-on
 for people who already built the sip-n-puff rather than a rewrite.
+
+## The conclusion this weekend reached
+
+**We are not losing the eye. We are losing the head.**
+
+At the faire a father held his daughter's head still while she used the
+tracker and the gaze went steady, no noise. That session scored **2.11 deg
+median, p95 5.30, fixation scatter 12.0 px against a faire median of 24** --
+**better than any run the developer ever recorded**, on the same camera,
+model and fit. Every other measurement agrees:
+
+| | |
+|---|---|
+| head turn past 20 deg | valid rate **71% -> 5%** |
+| head pitch past 20 deg | **72% -> 4%** |
+| moved from the calibration distance | 5.30 -> **8.93 deg** |
+| error is bias/drift, not jitter | scatter/error **0.22** |
+| head pointing (ArUco tag, no inference) | **0 losses in 359 frames** |
+
+A tracker that is bias-dominated, decays with movement, collapses past 20 deg
+of rotation and turns excellent when someone holds the head is not short of
+iris resolution.
+
+**The fix, suggested by Massimo Manzi at Maker Faire: a carrier board for
+this SoC with two CSI ports.** Stereo gives head pose directly instead of
+inferring it from a monocular face mesh -- and the face mesh's pose estimate
+is exactly what dies past 20 deg, when it is most needed. NoIR sensor
+variants also make the **850 nm LED already on our lamp** useful: it is
+currently near-dead weight, because the C920 has an IR-cut filter as a colour
+webcam should, which is why only the lamp's red 625 nm LEDs do any work.
+On a bare sensor, 850 nm gives corneal glints and bright/dark pupil -- and
+`iris_contrast` is already the measured predictor of steadiness here.
+
+**The risk is compute and it is unmeasured.** No NPU; inference is CPU-bound;
+one 720p stream alone is 19.0 fps before any inference. Two streams plus
+stereo plus a face mesh may not fit. Measure two simultaneous captures before
+buying anything.
+
+**Cheaper experiment first, on hardware in hand:** head tracking already
+produces a clean head-position signal at 18 fps for almost no compute, and
+`LinearMapper` already takes yaw/pitch as features. **Feed the TAG position
+into the gaze mapping as the head-pose feature.** If head movement is what
+breaks gaze, that is the same compensation the second camera buys, for a day
+of work instead of a purchase order. Untested.
 
 ## Where it stands
 
@@ -354,6 +398,38 @@ a second click to confirm.
 
 **The game's white face-light border is off.** It predated the lamp, and the
 lamp measured 3.2× steadier — far more than a 12 px rim of white could buy.
+
+## Head pointing: an ArUco tag on the glasses
+
+Built 2026-09-30 for the visitors head turn had already excluded. A printed
+DICT_4X4_50 tag drives the same 3x2 AAC board through the same dwell.
+
+| | measured |
+|---|---|
+| detection | **100%**, 7.1 px per cell at 1280x720 |
+| lost during use | **0 of 359 frames** |
+| calibration | 5 of 5 points, RMS **0.0359 of screen** |
+| fps | 17.3 (camera alone 19.0 -- detection costs 0.9) |
+| reachable field | **102 px horizontal, 37 px vertical** |
+
+Subject's assessment: **"dead on."**
+
+**No inference at all** -- no face mesh, no LiteRT. Affine 2x3 model, because
+head-to-screen is near-linear: six parameters, five points over-determine
+them. Ridge would only let the fit chase curvature that is not there.
+
+**The reachable field is WIDE and SHALLOW.** People turn their heads far more
+than they nod: 102 px of tag travel horizontally against 37 px vertically for
+the whole screen. Against a ~3 px jitter floor that is 11x margin per column
+on a 3-wide board but 6x per row on a 2-high one. **A denser head board
+should add COLUMNS, not rows.** The suspicion that pointing down tilts the
+tag away from the camera was tested and REFUTED -- 100% detection at all nine
+targets of a 3x3 map, skew never above 0.04.
+
+**Three traps, each of which reads as "the user's head is unstable":** the
+tag on this rig is **id 2**, not the id 0 the spec named; a **dark room**
+collects 0 samples and blames the head; and dropping to 960x540 to chase
+frame rate costs a third of the detections for 2 fps.
 
 ## Open
 

@@ -716,7 +716,14 @@ Try both; they are different images and the landmark model may prefer either.
    been started by hand with explicit flags. The menu row passes
    `--tag-id 2 --dwell 1.2`; confirm that path end to end. Same for the
    eyes row, which has the `--dwell` fix but has not been run from the menu.
-0a. **Measure head pointing against the eye numbers properly.** Today's
+0a. **Feed the TAG position into the gaze mapping as the head-pose feature.**
+   The cheapest test of the whole head-movement hypothesis, on hardware
+   already here. If it works it is most of what the two-camera board would
+   buy. See RESULTS.md ("A cheaper experiment to run FIRST").
+0b. **Measure two simultaneous camera captures** before ordering the dual-CSI
+   carrier board. No NPU, and one 720p stream alone is 19.0 fps before any
+   inference. The compute budget is the risk, and it is unmeasured.
+0c. **Measure head pointing against the eye numbers properly.** Today's
    comparison was two sessions with different tasks. A controlled A/B --
    same targets, same duration, alternating -- would say what head pointing
    is actually worth, and it is the strongest result this project could

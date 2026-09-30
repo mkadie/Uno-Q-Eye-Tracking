@@ -1,3 +1,99 @@
+# Where this is going: head movement is the problem, and two cameras are the fix
+
+## The observation that frames everything
+
+**At Maker Faire, a father held his daughter's head still while she used the
+tracker, and the gaze went steady -- no noise.** That session is the one in
+the data at Saturday 11:47: **2.11 deg median, p95 5.30, fixation scatter
+12.0 px against a faire median of 24**, 40 throws, reaching level 2. It is
+**better than any run the developer ever recorded**, including the 3.27 deg
+lab figure, on the same camera, same model, same fit.
+
+That is the strongest single result in the project, and it is not a result
+about eye tracking. It is a result about heads.
+
+## Hypothesis: we are not losing the EYE, we are losing the HEAD
+
+Everything measured this weekend points the same way:
+
+| evidence | number |
+|---|---|
+| head turn past 20 deg | valid rate **71% -> 5%** |
+| head pitch past 20 deg | **72% -> 4%** |
+| moved from the calibration distance | 5.30 -> **8.93 deg** |
+| error is bias/drift, not jitter | scatter/error ratio **0.22** |
+| head held still by another person | **2.11 deg**, scatter 12 px |
+| head pointing, which does not care about eyes | **0 losses in 359 frames** |
+
+A tracker that is bias-dominated, degrades with movement away from
+calibration, collapses past 20 deg of rotation, and becomes excellent the
+moment somebody holds the head, is not short of iris resolution. **It is
+failing to know where the head is.**
+
+## The fix: two cameras, and an IR source the camera can actually see
+
+Suggested by **Massimo Manzi at Maker Faire**: there is a carrier board for
+this SoC with **two CSI camera ports**. Two cameras give head pose directly
+by stereo, rather than inferring it from a monocular face mesh, which is what
+would let the gaze mapping be corrected for head movement instead of
+degrading with it.
+
+Two things it buys at once:
+
+1. **Head-movement compensation.** Real head pose, continuously, instead of
+   the yaw/pitch estimate the face mesh produces -- which is the estimate
+   that dies past 20 deg, precisely when it is most needed.
+2. **NoIR sensors plus the 850 nm illuminator we already own.** CSI camera
+   modules come in NoIR variants with no IR-cut filter. 850 nm on a bare
+   sensor produces corneal glints and a bright/dark pupil, which is how every
+   commercial eye tracker localises a pupil -- and `iris_contrast` is already
+   the measured predictor of steadiness here (7.70 room light, 15.11 with the
+   red lamp).
+
+**And it closes a loop we already measured.** The lamp is 16 red LEDs *plus
+one 850 nm IR LED*. Red at ~625 nm passes the C920's IR-cut filter freely,
+which is why the lamp works at all -- but **the 850 nm LED is doing almost
+nothing, because the C920 has an IR-cut filter, as a colour webcam should.**
+We are already carrying the IR source. We just cannot see it. A NoIR sensor
+turns a component we already own from dead weight into the primary
+illuminator.
+
+**THE RISK IS COMPUTE, and it is not hypothetical.** This SoC has **no NPU**;
+inference is CPU-bound. Measured here: one 1280x720 stream alone delivers
+19.0 fps before any inference, and the full gaze pipeline runs 18-25 fps at
+best. **Two streams plus stereo plus a face mesh may not fit**, and the
+honest position is that nobody has measured it. Before buying anything,
+measure two simultaneous captures and see what is left.
+
+## A cheaper experiment to run FIRST, on hardware already in hand
+
+We built head tracking today, and it produces a clean head-position signal at
+18 fps **for almost no compute** -- an ArUco tag, ROI-tracked, no inference
+at all. The gaze mapper's `LinearMapper` already takes yaw and pitch from the
+face mesh as features.
+
+**Untested, and it should be tested before hardware is ordered: feed the TAG
+position into the gaze mapping as the head-pose feature**, replacing or
+augmenting the face-mesh yaw/pitch. If head movement is what is breaking
+gaze, and the tag knows where the head is when the face mesh does not, this
+is the same compensation the second camera would buy -- on the board that is
+already on the desk, for a few hours of work.
+
+It may not work: a tag gives head position cleanly but says nothing about the
+eye in the head, and the 2.11 deg session suggests the remaining error is
+head-related rather than eye-related, which is the hopeful reading. Either
+way it is a day, not a purchase order, and a negative result would sharpen
+the case for the two-camera board rather than weaken it.
+
+## Head pointing: the subject's assessment
+
+**"Dead on."** Used across a full session after the calibration fixes: RMS
+0.0359 of screen, 100% detection, not lost once in 359 frames, and a
+reachable field of 102 x 37 px that comfortably carries a 3 x 2 board. For
+the visitors whose head turn ended eye tracking -- 10% of the faire got
+nothing at all -- this is not a fallback. On this evidence it is the better
+input.
+
 # Head pointing from an ArUco tag, 2026-09-30 — first run
 
 A printed DICT_4X4_50 tag on the glasses, tracked by the same C920x, driving
