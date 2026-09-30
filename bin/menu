@@ -8,7 +8,8 @@ Everything follows from that:
   does NOT -- the menu is what you use when gaze is not yet calibrated, and a
   menu you need working gaze to escape is a trap.
 
-  BIG TARGETS. Three full-width rows. A visitor should never need precision
+  BIG TARGETS. Full-width rows, sized to fit however many there are. A
+  visitor should never need precision
   to start, and the operator should be able to hit one without looking.
 
   IT ALWAYS COMES BACK. Each activity is a child process; when it exits, for
@@ -70,6 +71,15 @@ ITEMS = [
     ("T-Rex Talker  —  mouse", "point at a word and click",
      ["python3", os.path.join(HERE, "talker"),
       "--menu", TALKER_MENU, "--sounds", TALKER_SOUNDS, "--mouse"]),
+    # Head pointing. This is the row for the visitor gaze could not serve:
+    # eye tracking holds to about 15 degrees of head turn and is gone by 20
+    # (71% valid -> 5%, measured over 2594 faire throws), because past that
+    # the camera has one eye to work with. A tag on the glasses is still
+    # square to the camera there. Same board, same dwell, no inference.
+    ("T-Rex Talker  —  head", "turn your head to point, hold to speak",
+     ["python3", os.path.join(HERE, "talker"),
+      "--menu", TALKER_MENU, "--sounds", TALKER_SOUNDS,
+      "--mode", "head", "--dwell", "1.2"]),
 ]
 
 WIN = "menu"
@@ -114,9 +124,7 @@ def draw(canvas, W, H, sel, confirm_quit, note):
     centre("Eye Gaze Demos", int(H * 0.13), 2.0, TEXT, 4)
     centre("Arduino UNO Q", int(H * 0.19), 0.9, DIM, 2)
 
-    top = int(H * 0.26)
-    rh = int(H * 0.16)
-    gap = int(H * 0.035)
+    top, rh, gap = row_geometry(H, len(ITEMS))
     for i, (name, sub, _) in enumerate(ITEMS):
         y0 = top + i * (rh + gap)
         x0, x1 = int(W * 0.12), int(W * 0.88)
@@ -140,8 +148,28 @@ def draw(canvas, W, H, sel, confirm_quit, note):
         centre("click, or arrows and ENTER", int(H * 0.88), 1.0, DIM, 2)
 
 
+def row_geometry(H, n):
+    """(top, row height, gap) for n rows, guaranteed to fit the screen.
+
+    DERIVED, not written down twice. The heights used to be three literals
+    repeated in the drawing code and again in the hit test, sized so that
+    THREE rows fitted. Adding a fourth put the last row at 1.005 x H -- off
+    the bottom edge, with a hit test that still claimed it was there. The
+    row you cannot see is the row nobody can start.
+
+    Rows share the band between the title and the footer. They grow no taller
+    than 16% of the screen, so a short menu still reads as big targets rather
+    than four stripes.
+    """
+    top = int(H * 0.26)
+    bottom = int(H * 0.84)              # leaves the footer hint clear
+    gap = int(H * 0.035)
+    rh = min(int(H * 0.16), (bottom - top - gap * (n - 1)) // max(1, n))
+    return top, rh, gap
+
+
 def row_at(y, H):
-    top, rh, gap = int(H * 0.26), int(H * 0.16), int(H * 0.035)
+    top, rh, gap = row_geometry(H, len(ITEMS))
     for i in range(len(ITEMS)):
         y0 = top + i * (rh + gap)
         if y0 <= y <= y0 + rh:

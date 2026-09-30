@@ -54,9 +54,11 @@ import cv2
 import numpy as np
 
 from spike import backends, calib, camera, config, features, menu as menulib
+from spike import tagtrack
 from spike import nosleep
 from spike.oneeuro import OneEuroFilter2D
-from spike.targets import WIN, collect_point, grid_points, shuffled
+from spike.targets import (WIN, collect_point, draw_target, grid_points,
+                           shuffled)
 
 DEFAULT_MENU = "/home/trex/claude/coder/talker_v3/menus/base_fruitjam.menu"
 
@@ -347,6 +349,64 @@ def cell_centre(c, r, m, w, h):
 # --------------------------------------------------------------------------
 
 
+def calibrate_head(cam, canvas, tracker, cal_path, W, H, tag_id):
+    """Five points, affine, tag centre only. No inference runs here.
+
+    Same on-screen sequence the eye path uses -- a dot that shrinks while it
+    settles -- because a visitor should not have to learn two rituals. What
+    differs is what is sampled and how a point is accepted: a tag centre is a
+    hard measurement, so a point is REJECTED unless it holds still to 3 px,
+    where the eye path has to accept whatever a wandering iris gives it.
+
+    Returns (TagMapper, rms, span_px) or (None, reason, None).
+    """
+    feats, tgts = [], []
+    for i, (fx, fy) in enumerate(tagtrack.CAL_POINTS):
+        pt = (int(fx * W), int(fy * H))
+        got = None
+        for _ in range(tagtrack.RETRIES + 1):
+            t0 = time.perf_counter()
+            samples = []
+            while True:
+                el = time.perf_counter() - t0
+                if el >= tagtrack.SETTLE_S + tagtrack.COLLECT_S:
+                    break
+                phase = min(1.0, el / tagtrack.SETTLE_S)
+                draw_target(canvas, pt, phase,
+                            "%d / %d   point the tag at the dot"
+                            % (i + 1, len(tagtrack.CAL_POINTS)))
+                cv2.imshow(WIN, canvas)
+                if (cv2.waitKey(1) & 0xFF) == ord("q"):
+                    return None, "aborted", None
+                frame = cam.read()
+                if frame is None:
+                    continue
+                hit = tracker.find(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+                if hit is not None and el >= tagtrack.SETTLE_S:
+                    samples.append(hit[0])
+            pts = np.asarray(samples)
+            if (len(pts) >= tagtrack.MIN_SAMPLES
+                    and float(pts.std(axis=0).max()) <= tagtrack.MAX_JITTER_PX):
+                got = np.median(pts, axis=0)
+                break
+            print("  point %d unstable (%d samples) -- retry" % (i + 1, len(pts)))
+        if got is not None:
+            feats.append(got)
+            tgts.append((fx, fy))
+    if len(feats) < tagtrack.MIN_POINTS:
+        return None, "only %d of %d points held still" % (
+            len(feats), len(tagtrack.CAL_POINTS)), None
+    m = tagtrack.TagMapper()
+    rms = m.fit(feats, tgts)
+    span_px, gain = tagtrack.gain_px_per_screen(feats, tgts)
+    m.save(cal_path, {"tag_id": tag_id, "res": [W, H], "rms": rms,
+                      "span_px": span_px.tolist(), "points": len(feats)})
+    print("head calibrated: rms %.4f of screen, tag span %.0f x %.0f px, "
+          "gain %.0f x %.0f px per screen" % (rms, span_px[0], span_px[1],
+                                              gain[0], gain[1]))
+    return m, rms, span_px
+
+
 def calibrate(cam, be, cfg, canvas, n_pts, rng):
     """Short grid + LINEAR model.
 
@@ -377,6 +437,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--menu", default=DEFAULT_MENU)
     ap.add_argument("--points", type=int, default=9)
+    ap.add_argument("--mode", choices=("eye", "head"), default="eye",
+                    help="eye = iris + face mesh (default, unchanged). "
+                         "head = ArUco tag on the glasses; no inference at "
+                         "all, so it survives the head turns that end eye "
+                         "tracking at ~20 deg.")
+    ap.add_argument("--tag-id", type=int, default=0,
+                    help="ArUco DICT_4X4_50 id on the glasses (head mode)")
+    ap.add_argument("--headcal", default=tagtrack.DEFAULT_CAL,
+                    help="head calibration file, kept separate from the eye "
+                         "model so neither can overwrite the other")
+    ap.add_argument("--recal", action="store_true",
+                    help="force calibration even if a saved one loads")
     ap.add_argument("--trail", type=int, default=0, metavar="N",
                     help="draw the last N gaze samples as a fading trail "
                          "(implied by --record)")
@@ -427,6 +499,15 @@ def main():
     n_trail = args.trail or (90 if args.record else 0)
     trail = collections.deque(maxlen=n_trail) if n_trail else None
     want_shot = {"now": bool(args.record)}   # first frame on start
+    # SIGUSR2 recenters the head map: one offset update that keeps the gain,
+    # for when a chair shifts mid-session. NOTE the spec asked for
+    # recalibrate on SIGUSR1, but SIGUSR1 already means "save a frame" in
+    # this tool and that is documented in RESTART.md -- so recalibration
+    # stays on `r`, which is the trigger eye mode already uses.
+    want_recenter = {"now": False}
+    if head:
+        signal.signal(signal.SIGUSR2,
+                      lambda *_: want_recenter.__setitem__("now", True))
     if args.record:
         os.makedirs(args.record, exist_ok=True)
         signal.signal(signal.SIGUSR1, lambda *_: want_shot.__setitem__("now", True))
@@ -434,6 +515,10 @@ def main():
               % (args.record, os.getpid()))
     shot_n = 0
     last_auto = 0.0
+    last_gx, last_gy = W // 2, H // 2   # where a lost tag holds the pointer
+    last_tag = None                     # last tag centre, for SIGUSR2 recenter
+    tag_seen = False
+    lost_since = None
     if m.columns * m.rows != 6:
         print("note: %s is %dx%d, not 3x2 -- drawing it anyway"
               % (os.path.basename(args.menu), m.columns, m.rows))
@@ -462,12 +547,22 @@ def main():
         print("audio : all %d presses have a clip" % len(have))
 
     cam = be = mapper = None
+    head = (args.mode == "head")
+    tracker = None
     if not args.mouse:
         c = cfg["camera"]
         cam = camera.Camera(c["device"], c["width"], c["height"], c["fps"],
                             c["fourcc"], c["exposure"], c["focus"],
                             c["gain"]).open()
-        be = backends.create(prefer=cfg["inference"]["backend"])
+        if head:
+            # No backend at all. Head mode runs no inference -- the whole
+            # cost is one ArUco scan of a small crop -- so loading LiteRT
+            # here would reserve threads and memory for nothing.
+            tracker = tagtrack.TagTracker(args.tag_id)
+            print("head mode: ArUco DICT_4X4_50 id %d, no inference"
+                  % args.tag_id)
+        else:
+            be = backends.create(prefer=cfg["inference"]["backend"])
 
     # GUI_NORMAL is NOT cosmetic here. This OpenCV is built against Qt5, and
     # cv2.WINDOW_GUI_EXPANDED is *zero* -- so the bare WINDOW_NORMAL we used
@@ -485,7 +580,22 @@ def main():
 
     seed = args.seed if args.seed is not None else random.randrange(2 ** 31)
     rng = np.random.default_rng(seed)
-    if cam is not None:
+    headmap = None
+    if cam is not None and head:
+        # A saved head calibration is reused unless --recal. The tag is rigid
+        # and the fit is six parameters, so unlike the eye model it does not
+        # go stale the moment the subject shifts -- and a visitor who only
+        # wants to point should not sit through five dots to do it.
+        headmap = tagtrack.TagMapper.load(args.headcal)
+        if headmap.fitted and not args.recal:
+            print("head calibration loaded from %s" % args.headcal)
+        else:
+            headmap, why, _ = calibrate_head(cam, canvas, tracker,
+                                             args.headcal, W, H, args.tag_id)
+            if headmap is None:
+                print("head calibration failed: %s -- falling back to the "
+                      "pointer" % why)
+    elif cam is not None:
         print("calibrating %d points (seed %d)..." % (args.points, seed))
         mapper = calibrate(cam, be, cfg, canvas, args.points, rng)
         if mapper is None:
@@ -517,7 +627,7 @@ def main():
     cand = None                      # cell the raw gaze is in right now
     cand_n = 0                       # consecutive samples it has won
     dwell_since = None
-    use_mouse = args.mouse or mapper is None
+    use_mouse = args.mouse or (headmap is None if head else mapper is None)
     # Every selection is a MEASUREMENT: where the gaze was against the cell
     # it landed in. That is what makes this a test and not a toy.
     log = []
@@ -534,7 +644,25 @@ def main():
 
         gx = gy = None
         last_frame = None
-        if not use_mouse and cam is not None:
+        if not use_mouse and cam is not None and head:
+            frame = cam.read()
+            if frame is not None:
+                last_frame = frame
+                hit = tracker.find(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+                if hit is not None:
+                    tag_seen = True
+                    nx, ny = headmap.map(hit[0])
+                    gx, gy = filt(float(nx) * W, float(ny) * H, now)
+                    last_tag = hit[0]
+                else:
+                    # Tag lost: HOLD the pointer where it was. Do not fall
+                    # through to the mouse and do not drift -- a pointer that
+                    # jumps when a hand passes the glasses is worse than one
+                    # that pauses, and a dwell in progress would fire on
+                    # whatever it landed on.
+                    tag_seen = False
+                    gx, gy = last_gx, last_gy
+        elif not use_mouse and cam is not None:
             frame = cam.read()
             if frame is not None:
                 last_frame = frame
@@ -559,6 +687,7 @@ def main():
                         pass
         if use_mouse or gx is None:
             gx, gy = mouse["x"], mouse["y"]
+        last_gx, last_gy = gx, gy
 
         gx = min(max(float(gx), 0.0), W - 1.0)
         gy = min(max(float(gy), 0.0), H - 1.0)
@@ -585,14 +714,26 @@ def main():
             hover = cell
             dwell_since = now if (press is not None and args.dwell > 0) else None
         frac = 0.0
-        if args.dwell > 0 and dwell_since is not None and press is not None:
+        if head and not use_mouse and not tag_seen:
+            # Tag lost: freeze the dwell too, not just the pointer. The
+            # pointer is held on its last cell, so letting the clock run
+            # would speak that cell a second or two after the tag went --
+            # a word nobody asked for, which on an AAC board is the whole
+            # failure.
+            dwell_since = now
+        elif args.dwell > 0 and dwell_since is not None and press is not None:
             frac = (now - dwell_since) / args.dwell
 
         # What is highlighted is what gets spoken. Anything else is a lie to the
         # user, and on an AAC device saying the wrong word is the whole failure.
         press = m.at(*hover) if hover else None
 
-        src = "mouse" if use_mouse else "gaze"
+        if use_mouse:
+            src = "mouse"
+        elif head:
+            src = "head" if tag_seen else "head TAG LOST"
+        else:
+            src = "gaze"
         status = ("%s   click/dwell speak   RIGHT-CLICK home   b back"
                   "   r recalibrate   m %s   q quit   [hold %d  smooth %.2f]"
                   % (src, "gaze" if use_mouse else "mouse", args.hold, args.smooth))
@@ -644,6 +785,12 @@ def main():
         # Home is checked BEFORE `fire` is latched. Below the latch the
         # click has already been folded into `fire` and clearing it does
         # nothing -- the cell under the cursor speaks on the way out.
+        if want_recenter["now"]:
+            want_recenter["now"] = False
+            if headmap is not None and headmap.fitted and last_tag is not None:
+                headmap.recenter(last_tag)
+                print("head map recentred on the current tag position")
+
         if mouse["home"]:
             mouse["home"] = False
             mouse["click"] = False       # navigation never also speaks
@@ -686,6 +833,16 @@ def main():
             if nxt is not None:
                 m, menu_dir = nxt
                 hover, dwell_since = None, None
+            continue
+        if k == ord('r') and cam is not None and head:
+            nm, why, _ = calibrate_head(cam, canvas, tracker, args.headcal,
+                                        W, H, args.tag_id)
+            if nm is not None:
+                headmap, use_mouse = nm, False
+                if hasattr(filt, "reset"):
+                    filt.reset()
+            else:
+                print("head recalibration failed: %s" % why)
             continue
         if k == ord('r') and cam is not None:
             nm = calibrate(cam, be, cfg, canvas, args.points, rng)
