@@ -60,6 +60,51 @@ rather than gating on it -- a gate there fails a rig that is working
 perfectly. And the smaller frame trades a third of the detections for 2 fps,
 because the tag falls to ~5.5 px per cell and the corners stop resolving.
 
+# Head pointing has a WIDE, SHALLOW reachable field, 2026-09-30
+
+`bin/headrange`, nine targets across the screen, lights on. **The suspicion
+that pointing down tilts the tag away from the camera is REFUTED:**
+
+| row | found | median skew |
+|---|---|---|
+| top (y 0.15) | **100%** | 0.02 |
+| middle (y 0.50) | **100%** | 0.00 |
+| bottom (y 0.85) | **100%** | 0.01 |
+
+100% detection at all nine targets and skew never above 0.04, so the tag is
+never meaningfully oblique and the bottom row is if anything *better* than
+the top. The bottom-corner failures that prompted this were the room lights.
+
+**What the map DID find is the real constraint: the tag travels 102 px
+horizontally and only 37 px VERTICALLY across the whole screen.** People turn
+their heads far more than they nod, so the vertical axis has under a third of
+the range to work with -- and it is range, not detection, that limits what
+can be built on this.
+
+Per cell of a 3 x 2 board, against a calibration jitter floor of ~3 px:
+
+| | tag travel per cell | margin over noise |
+|---|---|---|
+| 3 columns | 34 px | **11x** |
+| 2 rows | 18.5 px | **6x** |
+
+**So prefer WIDE boards to TALL ones for head pointing.** A 3-row board would
+give ~12 px per row (4x margin) and a 4-row board ~9 px (3x) -- at which
+point a single 3 px wobble is a third of a cell. The existing 3 x 2 talker is
+well matched to this by luck rather than design; a denser grid should add
+columns, not rows.
+
+This also explains the gain figures the calibration reports: 104 px per
+screen width against 66 per screen height, and the 73 x 46 px span of the
+calibration itself. Three separate measurements agree that the vertical axis
+is the thin one.
+
+**Caveat: one subject, one sitting.** Neck range varies enormously, and the
+whole point of calibrating per person is that a small span is not a failure
+-- it means high gain. What this fixes is the DESIGN question of how many
+rows a head-driven board can carry, and that answer should be re-measured on
+anyone whose range differs.
+
 ## The sample-count protocol: RMS halved, retries nearly gone
 
 Re-run 2026-09-30 after the change, lights on:

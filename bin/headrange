@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""Where on the screen can a head actually point? A 3x3 map of tag health.
+
+THE QUESTION. Head calibration with the room lights off failed hardest on the
+two BOTTOM corners, which raised a specific suspicion: pointing down tilts a
+tag worn on the glasses away from the camera, so the bottom of the screen may
+be unreachable however good the fit is. The measured gain hints the same way
+-- 104 px of tag travel per screen WIDTH against 66 px per screen HEIGHT.
+
+This maps it instead of arguing about it. Nine targets, and at each one three
+numbers that fail in different ways:
+
+  detection %  -- can the tag be decoded here at all
+  side px      -- how big it appears; falls with distance AND with tilt
+  skew         -- |d0 - d1| / mean(d) over the quad's two diagonals. A square
+                  seen face-on has skew 0. Perspective makes one diagonal
+                  longer than the other, so this rises with viewing angle and
+                  is the number that distinguishes "too far" from "too
+                  oblique" -- side alone cannot.
+
+A cell that reads 100% / 40 px / 0.05 is comfortable. One that reads 100% /
+40 px / 0.35 is being decoded but is on its way out; one at 0% with a healthy
+neighbour is past the limit.
+
+Usage:  bin/headrange [--hold 2.0] [--tag-id 2]
+"""
+import argparse
+import os
+import sys
+import time
+
+import cv2
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from spike import camera, config, marker_board, nosleep, tagtrack
+
+WIN = "headrange"
+FRACS = (0.15, 0.5, 0.85)
+
+
+def skew(corners):
+    """Perspective distortion of a square, 0 = face-on."""
+    d0 = np.linalg.norm(corners[0] - corners[2])
+    d1 = np.linalg.norm(corners[1] - corners[3])
+    return float(abs(d0 - d1) / max(1e-6, 0.5 * (d0 + d1)))
+
+
+def detect_full(det, gray, tag_id):
+    """Full-frame detect that also returns the raw quad, for skew."""
+    corners, ids, _ = det(gray)
+    if ids is None:
+        return None
+    for c, i in zip(corners, np.ravel(ids)):
+        if int(i) == tag_id:
+            return c.reshape(4, 2).astype(np.float64)
+    return None
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--hold", type=float, default=2.0,
+                    help="seconds of sampling per target, after a settle")
+    ap.add_argument("--settle", type=float, default=1.5)
+    ap.add_argument("--tag-id", type=int, default=tagtrack.DEFAULT_TAG_ID)
+    args = ap.parse_args()
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = config.load(os.path.join(root, "config.toml"))
+    W, H = cfg["screen"]["width_px"], cfg["screen"]["height_px"]
+    c = cfg["camera"]
+    cam = camera.Camera(c["device"], c["width"], c["height"], c["fps"],
+                        c["fourcc"], c["exposure"], c["focus"], c["gain"]).open()
+    det = marker_board.make_detector(tagtrack.DICT)
+
+    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+    cv2.setWindowProperty(WIN, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    nosleep.hold()
+    canvas = np.zeros((H, W, 3), np.uint8)
+
+    # Same acquire-first rule as calibration: never ask someone to point at a
+    # dot before the tag has been seen, or a dark room reads as a bad head.
+    ready, t0 = 0, time.perf_counter()
+    while ready < 5 and time.perf_counter() - t0 < 20.0:
+        canvas[:] = (16, 16, 18)
+        cv2.putText(canvas, "finding the tag...", (W // 2 - 220, H // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.3, (200, 200, 210), 2, cv2.LINE_AA)
+        cv2.imshow(WIN, canvas)
+        cv2.waitKey(1)
+        f = cam.read()
+        if f is None:
+            continue
+        ready = ready + 1 if detect_full(det, cv2.cvtColor(f, cv2.COLOR_BGR2GRAY),
+                                         args.tag_id) is not None else 0
+    if ready < 5:
+        print("tag never appeared -- check the lights and run bin/tagcheck")
+        return 2
+
+    rows = []
+    for fy in FRACS:
+        for fx in FRACS:
+            pt = (int(fx * W), int(fy * H))
+            t0 = time.perf_counter()
+            n = hit = 0
+            sides, skews, cx, cy = [], [], [], []
+            while time.perf_counter() - t0 < args.settle + args.hold:
+                el = time.perf_counter() - t0
+                canvas[:] = (16, 16, 18)
+                phase = min(1.0, el / args.settle)
+                cv2.circle(canvas, pt, int(40 - 24 * phase), (70, 140, 220), 3,
+                           cv2.LINE_AA)
+                cv2.circle(canvas, pt, 7, (240, 240, 245), -1, cv2.LINE_AA)
+                cv2.putText(canvas, "point your head at the dot",
+                            (W // 2 - 330, H - 60), cv2.FONT_HERSHEY_SIMPLEX,
+                            1.0, (120, 120, 130), 2, cv2.LINE_AA)
+                cv2.imshow(WIN, canvas)
+                if (cv2.waitKey(1) & 0xFF) == ord("q"):
+                    cam.close()
+                    return 1
+                f = cam.read()
+                if f is None or el < args.settle:
+                    continue
+                n += 1
+                q = detect_full(det, cv2.cvtColor(f, cv2.COLOR_BGR2GRAY),
+                                args.tag_id)
+                if q is not None:
+                    hit += 1
+                    sides.append(float(np.linalg.norm(q[0] - q[2]) / 1.41421356))
+                    skews.append(skew(q))
+                    ctr = q.mean(axis=0)
+                    cx.append(ctr[0])
+                    cy.append(ctr[1])
+            rows.append(dict(fx=fx, fy=fy, n=n, hit=hit,
+                             side=float(np.median(sides)) if sides else float("nan"),
+                             skew=float(np.median(skews)) if skews else float("nan"),
+                             cx=float(np.median(cx)) if cx else float("nan"),
+                             cy=float(np.median(cy)) if cy else float("nan")))
+    cam.close()
+    cv2.destroyAllWindows()
+
+    print("\n%-14s %7s %8s %7s   %s" % ("target", "found", "side px", "skew",
+                                        "tag centre px"))
+    for r in rows:
+        pct = 100.0 * r["hit"] / max(1, r["n"])
+        flag = "" if pct >= 90 else ("  <-- WEAK" if pct > 0 else "  <-- LOST")
+        print("%-14s %6.0f%% %8.1f %7.2f   (%5.0f, %5.0f)%s"
+              % ("x%.2f y%.2f" % (r["fx"], r["fy"]), pct, r["side"], r["skew"],
+                 r["cx"], r["cy"], flag))
+
+    ok = [r for r in rows if r["hit"] and 100.0 * r["hit"] / max(1, r["n"]) >= 90]
+    if len(ok) >= 2:
+        xs = [r["cx"] for r in ok]
+        ys = [r["cy"] for r in ok]
+        print("\nreachable span of the TAG over usable targets: %.0f x %.0f px"
+              % (np.ptp(xs), np.ptp(ys)))
+    bottom = [r for r in rows if r["fy"] == 0.85]
+    top = [r for r in rows if r["fy"] == 0.15]
+
+    def rate(rs):
+        return 100.0 * sum(x["hit"] for x in rs) / max(1, sum(x["n"] for x in rs))
+
+    def med(rs, k):
+        v = [x[k] for x in rs if not np.isnan(x[k])]
+        return float(np.median(v)) if v else float("nan")
+
+    print("\ntop row    %3.0f%% found, skew %.2f" % (rate(top), med(top, "skew")))
+    print("bottom row %3.0f%% found, skew %.2f" % (rate(bottom), med(bottom, "skew")))
+    if rate(bottom) < rate(top) - 10:
+        print("\nBOTTOM IS WORSE. If skew is also higher there, the tag is "
+              "tilting away as the head pitches down -- that is a wearing "
+              "angle problem, not a calibration one.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

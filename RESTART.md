@@ -533,6 +533,14 @@ and the corners stop resolving. **Detection costs 0.9 fps** -- the shortfall
 against the spec's 25 is the sensor and the MJPEG decode, not the tracker,
 which is why `tagcheck` reports fps instead of gating on it.
 
+**The reachable field is WIDE and SHALLOW.** `bin/headrange` maps it: nine
+targets, detection + tag size + skew at each. MEASURED 2026-09-30: 100% at
+all nine, skew never above 0.04 -- the tag does NOT tilt away when pointing
+down, that suspicion is dead -- but the tag travels **102 px horizontally
+and only 37 px vertically** across the whole screen. Against a ~3 px jitter
+floor that is 11x margin per column on a 3-wide board and 6x per row on a
+2-high one. **A denser head board should add COLUMNS, not rows.**
+
 **Design decisions worth not re-litigating:**
 
 - **In-process, not uinput.** The spec offers a uinput virtual mouse; `evdev`
