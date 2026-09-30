@@ -576,11 +576,13 @@ Try both; they are different images and the landmark model may prefer either.
 6. Bare-face-mesh column of update.md's ladder table — never run.
 7. Re-upload `DIGEST.md` to Drive / the claude.ai Project after any of the
    above lands. It is a snapshot, not a link. **Current: 2026-09-29**, Drive
-   id `1z-druXXDk5locElFjpZhZ0H7vacbLdl5`, in the `claude/sip-n-puff/unoq`
+   id `1hmITrRAye9SEDZUzc4vJG6_IosblVOpa`, in the `claude/sip-n-puff/unoq`
    folder (`14dd62Ji4FD4DmqHKwKH1Gudv-42MTLsO`). Superseded snapshots go to
    `unoq-gaze-spike ARCHIVE` (`1aWFUXOeGpNTzXl0Z_753VCpgFIlam_Ry`), renamed
    `SUPERSEDED <date> ... (do not use as current)` -- 09-21 and 09-23 are
-   both there.
+   both there. The measurement report is a Claude Doc, not Drive:
+   https://claude.ai/artifact/DZrdz44qiA5NHy175mNJed -- it carries the faire
+   section and is updated alongside this file.
 
 ## Where we are right now
 
