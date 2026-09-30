@@ -38,8 +38,10 @@ Mouse: LEFT speak    RIGHT or MIDDLE back to the main menu
 """
 
 import argparse
+import collections
 import math
 import os
+import signal
 import random
 import shutil
 import subprocess
@@ -179,6 +181,31 @@ class Voice(object):
 
 # --------------------------------------------------------------------------
 # Board drawing
+
+
+def draw_trail(canvas, trail):
+    """Fade in the recent gaze samples, oldest dimmest.
+
+    This is what the tracker actually does between selections, and it is the
+    thing a still screenshot otherwise cannot show: the point does not sit
+    on the target, it wanders around it. Drawn on an overlay and blended so
+    the older samples genuinely fade instead of stacking into a solid smear
+    -- a smear reads as one big error, where the truth is many small ones
+    around a centre.
+    """
+    if len(trail) < 2:
+        return
+    over = canvas.copy()
+    n = len(trail)
+    for i, (x, y) in enumerate(trail):
+        f = (i + 1) / float(n)            # 0 = oldest, 1 = newest
+        # Cyan -> white. A warm ramp vanished against the hover cell, which
+        # is brown; cyan is far from every colour on this board, so the
+        # trail reads on the highlighted cell and the dark ones alike.
+        cv2.circle(over, (int(x), int(y)), max(2, int(3 + 4 * f)),
+                   (255, int(200 + 55 * f), int(60 + 195 * f)),
+                   -1, cv2.LINE_AA)
+    cv2.addWeighted(over, 0.8, canvas, 0.2, 0, canvas)
 
 
 def back_target(m, menu_dir, stack):
@@ -350,6 +377,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--menu", default=DEFAULT_MENU)
     ap.add_argument("--points", type=int, default=9)
+    ap.add_argument("--trail", type=int, default=0, metavar="N",
+                    help="draw the last N gaze samples as a fading trail "
+                         "(implied by --record)")
+    ap.add_argument("--record", metavar="DIR",
+                    help="save frames here. SIGUSR1 saves one immediately, "
+                         "so a capture can be triggered over ssh by someone "
+                         "with no keyboard on the board.")
+    ap.add_argument("--record-every", type=float, default=0.0, metavar="SEC",
+                    help="also save a frame every SEC seconds (0 = only on "
+                         "SIGUSR1)")
     ap.add_argument("--mouse", action="store_true",
                     help="no camera; pointer only, for layout work")
     ap.add_argument("--dwell", type=float, default=0.0,
@@ -379,6 +416,20 @@ def main():
     # the board the visitor was handed is the one "main menu" means.
     home = (m, menu_dir)
     exit_armed_until = 0.0           # first press arms, second press leaves
+
+    # Capture. SIGUSR1 rather than a key, because the board a visitor uses
+    # has no keyboard -- `kill -USR1 $(pgrep -f bin/talk[e]r)` over ssh saves
+    # the frame, so the moment can be chosen by someone watching the screen.
+    n_trail = args.trail or (90 if args.record else 0)
+    trail = collections.deque(maxlen=n_trail) if n_trail else None
+    want_shot = {"now": bool(args.record)}   # first frame on start
+    if args.record:
+        os.makedirs(args.record, exist_ok=True)
+        signal.signal(signal.SIGUSR1, lambda *_: want_shot.__setitem__("now", True))
+        print("recording to %s -- kill -USR1 %d to grab a frame"
+              % (args.record, os.getpid()))
+    shot_n = 0
+    last_auto = 0.0
     if m.columns * m.rows != 6:
         print("note: %s is %dx%d, not 3x2 -- drawing it anyway"
               % (os.path.basename(args.menu), m.columns, m.rows))
@@ -543,8 +594,23 @@ def main():
         if at_home:
             draw_exit_chip(canvas, W, H, now < exit_armed_until,
                            in_exit(mouse["x"], mouse["y"], W, H))
+        if trail is not None:
+            trail.append((gx, gy))
+            draw_trail(canvas, trail)     # under the cursor, never over it
         cv2.circle(canvas, (int(gx), int(gy)), 16, (255, 255, 255), 2)
         cv2.circle(canvas, (int(gx), int(gy)), 3, ACCENT, -1)
+
+        if args.record:
+            if args.record_every and now - last_auto >= args.record_every:
+                want_shot["now"] = True
+                last_auto = now
+            if want_shot["now"]:
+                want_shot["now"] = False
+                shot_n += 1
+                fn = os.path.join(args.record, "talker_%03d.png" % shot_n)
+                cv2.imwrite(fn, canvas)
+                print("saved %s  (%s, hover=%s)" % (fn, src, hover))
+
         cv2.imshow(WIN, canvas)
         k = cv2.waitKey(1) & 0xFF
 
