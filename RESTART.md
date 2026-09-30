@@ -1,6 +1,6 @@
 # RESTART — read this first after a crash or power loss
 
-Last updated: **2026-09-30** — HEAD POINTING WORKS. Code public on GitHub.
+Last updated: **2026-09-30**, end of session — HEAD POINTING WORKS, tuned and mapped. Code public on GitHub. **Board powered down.**
 
 > **THE FAIRE RAN Fri 25 + Sat 26 Sep: 125 visitors, 2413 throws, p50 6.26
 > deg — and SUNDAY CAPTURED NOTHING.** 87% of visitors got a median error of
@@ -28,12 +28,13 @@ Last updated: **2026-09-30** — HEAD POINTING WORKS. Code public on GitHub.
 > across one of these crashes is void.
 
 > **HEAD POINTING WORKS, AND IT IS THE ANSWER FOR THE 10% GAZE FAILED.**
-> An ArUco tag on the glasses drives the same AAC board. First run
-> 2026-09-30: **100% detection, NOT LOST ONCE in 359 frames**, 5 of 5
-> calibration points, RMS 0.079 of screen, 23 dwell selections. Subject:
-> "almost no drift, went right to my selections." Median trail spread
-> **1060 -> 368 px on the vertical axis** against gaze, same subject, same
-> day. **The tag on this rig is id 2, NOT the id 0 head_track.md names** --
+> An ArUco tag on the glasses drives the same AAC board. 2026-09-30:
+> **100% detection, NOT LOST ONCE in 359 frames**, 23 dwell selections.
+> Subject: "almost no drift, went right to my selections." Median trail
+> spread **1060 -> 368 px on the vertical axis** against gaze, same subject,
+> same day. After the calibration fixes: **RMS 0.0359 of screen** (was
+> 0.0793), 18 samples per point (was 8), 2 of 5 points retried (was 5 of 5),
+> tag acquired in 0.5 s. **The tag on this rig is id 2, NOT the id 0 head_track.md names** --
 > a wrong id reads exactly like bad lighting and cost an hour. It is the 4th
 > kiosk row. See RESULTS.md § "Head pointing from an ArUco tag".
 
@@ -516,8 +517,14 @@ Built 2026-09-30 to `head_track.md` (Drive, `claude/sip-n-puff/`, with
 `headtrack.py` as the reference implementation beside it).
 
     bin/tagcheck                 # 20 s: is the tag seen, how big, how fast
+    bin/headrange                # 35 s: 9-target map of the reachable field
     bin/talker --mode head       # calibrate (5 pts) then use the board
     bin/menu                     # row 4 does both, with --tag-id 2
+
+**START WITH `bin/tagcheck`.** Every head-mode failure so far has looked
+identical from the inside -- "calibration says my head is unstable" -- and
+had a different cause each time: wrong tag id, then room lights off. Thirty
+seconds of tagcheck names which.
 
 **TRAP 1: the tag on this rig is id 2.** `head_track.md` specifies id 0 and
 says 0-3 were printed. `tagcheck` reported **0% detection** and its advice
@@ -526,7 +533,22 @@ all 27 ArUco dictionaries over ONE captured frame, which found it instantly.
 **If detection is 0%, suspect the id before the optics.** Defaults now point
 at id 2 everywhere.
 
-**TRAP 2: do NOT drop to 960x540 to chase frame rate**, whatever the spec
+**TRAP 2: a DARK ROOM reports itself as five unstable calibration points.**
+MEASURED 2026-09-30: with the lights off, calibration collected **0 samples
+on 4 of 5 points** and called them unstable -- blaming the head for not
+holding still when the tag was never seen. Lights on, the tag is acquired in
+**0.5 s**. `calibrate_head` now waits for five consecutive detections before
+showing the first dot, so this says so out loud.
+
+I misread this first, and the misreading is the lesson: a trial read 1% /
+80% / 80% on the same dark screen and I called it the camera settling,
+citing frame mean barely moving (13.9 -> 17.2) as proof light was not the
+variable. The lights had been switched on mid-trial. **Frame mean could not
+show it because the lamp lights the FACE, not the scene** -- the third time
+this project has been fooled by a whole-frame statistic, after `gain` pinned
+at its ceiling and face brightness failing to predict rim detection.
+
+**TRAP 3: do NOT drop to 960x540 to chase frame rate**, whatever the spec
 says. Measured: 1280x720 gives 19.0 fps camera-alone and **100%** detection;
 960x540 gives 22.2 fps and **67%**, because the tag falls to ~5.5 px per cell
 and the corners stop resolving. **Detection costs 0.9 fps** -- the shortfall
@@ -690,10 +712,15 @@ Try both; they are different images and the landmark model may prefer either.
 
 ## Still open, roughly in priority order
 
-0. **Re-run the head calibration** and check whether the sample-count
-   protocol removes the per-point retries. It is the only change since the
-   good 5-of-5 run and it has not been tried against a real tag.
-0a. **Launch the eyes row from `bin/menu` once.** The `--dwell` fix is on the
+0. **Launch the head row from `bin/menu` once.** Head mode has only ever
+   been started by hand with explicit flags. The menu row passes
+   `--tag-id 2 --dwell 1.2`; confirm that path end to end. Same for the
+   eyes row, which has the `--dwell` fix but has not been run from the menu.
+0a. **Measure head pointing against the eye numbers properly.** Today's
+   comparison was two sessions with different tasks. A controlled A/B --
+   same targets, same duration, alternating -- would say what head pointing
+   is actually worth, and it is the strongest result this project could
+   still produce before the deadline. The `--dwell` fix is on the
    board but has only been run by launching `bin/talker` directly. One
    minute, and it is the path a visitor takes.
 0b. **Test the four kiosk exits by hand** — 5 minutes, and nothing else on
