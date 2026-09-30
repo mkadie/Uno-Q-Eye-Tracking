@@ -1,0 +1,4 @@
+{"label": "light_on", "frames": 121, "face_rate": 100.0, "gain": 109, "R": 26.9, "G": 21.8, "B": 27.8, "r_over_g": 1.234, "face_mean": 34.9, "iris_contrast": 10.53, "when": "23:50:31"}
+{"label": "light_off", "frames": 126, "face_rate": 100.0, "gain": 109, "R": 8.6, "G": 23.7, "B": 28.1, "r_over_g": 0.362, "face_mean": 10.0, "iris_contrast": 1.71, "when": "23:51:54"}
+{"label": "room_only", "frames": 119, "face_rate": 100.0, "gain": 109, "R": 14.2, "G": 33.5, "B": 37.5, "r_over_g": 0.424, "face_mean": 34.2, "iris_contrast": 7.7, "when": "23:56:12"}
+{"label": "room_plus_lamp", "frames": 119, "face_rate": 100.0, "gain": 109, "R": 34.3, "G": 31.6, "B": 38.6, "r_over_g": 1.087, "face_mean": 56.3, "iris_contrast": 15.11, "when": "23:58:00"}

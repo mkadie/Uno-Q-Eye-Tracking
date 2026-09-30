@@ -1,0 +1,514 @@
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=124.3s
+  fps    mean 12.1   p50 12.3   p5(slow tail) 8.9
+  face detected on 24% of frames
+  median face distance 573 mm
+  stage          mean      p50      p95      max
+  total_ms       82.9     81.2    112.2    222.7
+  capture_ms     40.8     44.2     77.6    104.2
+  infer_ms       38.3     26.2     91.0    167.9
+  landmark_ms    19.4      0.0     89.0    138.5
+  detect_ms      18.8     21.3     34.9     59.5
+  features_ms     5.3      4.4     10.8     21.6
+  resize_ms       2.2      2.0      4.1     15.3
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=138.4s
+  fps    mean 10.8   p50 11.0   p5(slow tail) 8.0
+  face detected on 88% of frames
+  median face distance 739 mm
+  stage          mean      p50      p95      max
+  total_ms       92.3     91.1    125.0    195.1
+  infer_ms       75.5     78.2    107.8    164.5
+  landmark_ms    70.9     77.4    103.6    164.0
+  capture_ms      8.5      0.0     49.5     91.9
+  features_ms     5.9      5.0     12.5     19.3
+  detect_ms       4.1      0.0     29.9     52.4
+  resize_ms       2.2      1.9      4.9     13.0
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=137.6s
+  fps    mean 10.9   p50 11.1   p5(slow tail) 7.8
+  face detected on 81% of frames
+  median face distance 730 mm
+  stage          mean      p50      p95      max
+  total_ms       91.7     90.0    128.1    199.1
+  infer_ms       70.8     75.8    106.7    151.7
+  landmark_ms    65.0     75.0    103.3    133.1
+  capture_ms     13.6      0.1     63.5     95.6
+  detect_ms       5.4      0.0     29.1     60.5
+  features_ms     5.3      4.3     10.5     18.5
+  resize_ms       2.3      2.0      4.9     11.0
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=137.7s
+  fps    mean 10.9   p50 11.1   p5(slow tail) 8.0
+  face detected on 86% of frames
+  median face distance 757 mm
+  stage          mean      p50      p95      max
+  total_ms       91.8     89.8    125.4    208.2
+  infer_ms       72.8     77.1    108.5    150.9
+  landmark_ms    68.2     76.2    103.4    142.9
+  capture_ms     11.8      0.1     58.1     98.4
+  features_ms     5.1      4.1     10.5     19.6
+  detect_ms       4.2      0.0     26.8     46.2
+  resize_ms       2.2      1.9      4.7     12.9
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=140.0s
+  fps    mean 10.7   p50 11.0   p5(slow tail) 7.9
+  face detected on 100% of frames
+  median face distance 479 mm
+  stage          mean      p50      p95      max
+  total_ms       93.3     91.3    126.3    167.8
+  infer_ms       81.0     79.6    108.8    150.0
+  landmark_ms    79.5     78.7    104.7    149.3
+  capture_ms      4.8      0.0     22.9     62.6
+  features_ms     4.4      3.5      8.9     17.7
+  resize_ms       2.2      2.0      4.7     14.9
+  detect_ms       1.0      0.0      0.0     47.2
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=139.7s
+  fps    mean 10.7   p50 10.9   p5(slow tail) 7.9
+  face detected on 100% of frames
+  median face distance 464 mm
+  stage          mean      p50      p95      max
+  total_ms       93.2     91.7    125.9    173.6
+  infer_ms       81.6     80.6    107.2    153.9
+  landmark_ms    80.1     79.6    103.9    153.7
+  features_ms     4.6      3.7      9.5     16.0
+  capture_ms      3.9      0.0     22.0     66.3
+  resize_ms       2.2      1.9      5.0     13.1
+  detect_ms       0.9      0.0      0.0     46.8
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=134.1s
+  fps    mean 11.2   p50 11.3   p5(slow tail) 8.5
+  face detected on 100% of frames
+  median face distance 474 mm
+  stage          mean      p50      p95      max
+  total_ms       89.4     88.1    117.3    172.6
+  infer_ms       80.5     79.3    106.1    160.2
+  landmark_ms    79.0     78.3    101.6    145.4
+  features_ms     4.3      3.5      8.7     14.8
+  resize_ms       2.3      2.0      5.2     13.1
+  capture_ms      1.4      0.0     10.8     51.5
+  detect_ms       0.9      0.0      0.0     51.1
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=137.2s
+  fps    mean 10.9   p50 11.2   p5(slow tail) 8.1
+  face detected on 100% of frames
+  median face distance 490 mm
+  stage          mean      p50      p95      max
+  total_ms       91.4     89.2    123.6    168.3
+  infer_ms       81.1     79.5    109.0    157.2
+  landmark_ms    79.6     78.6    105.0    156.3
+  features_ms     4.5      3.7      9.2     17.7
+  capture_ms      2.6      0.0     18.3     62.7
+  resize_ms       2.3      2.0      5.5     13.0
+  detect_ms       1.0      0.0      0.0     57.5
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=135.4s
+  fps    mean 11.1   p50 11.3   p5(slow tail) 8.3
+  face detected on 100% of frames
+  median face distance 469 mm
+  stage          mean      p50      p95      max
+  total_ms       90.3     88.5    121.1    174.2
+  infer_ms       81.3     79.9    109.3    160.6
+  landmark_ms    79.8     79.2    104.4    131.9
+  features_ms     4.4      3.5      9.1     18.8
+  resize_ms       2.3      2.0      5.3     11.9
+  capture_ms      1.4      0.0     10.5     45.4
+  detect_ms       1.0      0.0      0.0     59.7
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=140.3s
+  fps    mean 10.7   p50 10.9   p5(slow tail) 8.0
+  face detected on 98% of frames
+  median face distance 493 mm
+  stage          mean      p50      p95      max
+  total_ms       93.5     91.4    125.7    171.9
+  infer_ms       80.2     79.7    106.9    137.3
+  landmark_ms    78.3     78.9    103.2    129.8
+  capture_ms      5.5      0.0     25.5     74.8
+  features_ms     4.9      4.0      9.6     17.3
+  resize_ms       2.2      1.9      4.9      9.0
+  detect_ms       1.4      0.0     16.5     48.1
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=142.7s
+  fps    mean 10.5   p50 10.8   p5(slow tail) 7.8
+  face detected on 100% of frames
+  median face distance 516 mm
+  stage          mean      p50      p95      max
+  total_ms       95.1     93.0    127.8    199.7
+  infer_ms       82.5     80.2    111.4    195.1
+  landmark_ms    81.0     79.4    107.2    194.6
+  features_ms     5.0      4.0      9.7     20.1
+  capture_ms      4.4      0.0     22.5     44.0
+  resize_ms       2.3      2.0      5.3     13.2
+  detect_ms       1.0      0.0      0.0     47.2
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=119.2s
+  fps    mean 12.6   p50 13.0   p5(slow tail) 9.1
+  face detected on 7% of frames
+  median face distance 532 mm
+  stage          mean      p50      p95      max
+  total_ms       79.5     76.9    109.7    138.1
+  capture_ms     49.3     48.7     78.2    105.3
+  infer_ms       27.5     23.2     70.0    116.9
+  detect_ms      22.2     22.2     34.8     57.9
+  landmark_ms     5.3      0.0     68.6    116.3
+  features_ms     5.1      4.3      9.6     15.9
+  resize_ms       2.1      2.0      3.8      9.9
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=138.6s
+  fps    mean 10.8   p50 11.0   p5(slow tail) 8.0
+  face detected on 84% of frames
+  median face distance 658 mm
+  stage          mean      p50      p95      max
+  total_ms       92.4     91.1    125.4    208.6
+  infer_ms       72.3     77.3    106.2    152.8
+  landmark_ms    67.0     76.5    102.9    135.5
+  capture_ms     12.1      0.1     61.5     92.5
+  features_ms     5.9      5.0     12.1     18.4
+  detect_ms       4.8      0.0     29.2     58.2
+  resize_ms       2.2      2.0      4.7     12.5
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=131.7s
+  fps    mean 11.4   p50 11.5   p5(slow tail) 8.3
+  face detected on 54% of frames
+  median face distance 605 mm
+  stage          mean      p50      p95      max
+  total_ms       87.8     87.1    121.1    246.5
+  infer_ms       55.8     60.4    102.9    176.6
+  landmark_ms    43.6     59.9    101.0    142.3
+  capture_ms     26.6     19.4     75.2    106.5
+  detect_ms      12.0      0.0     33.2     51.5
+  features_ms     4.9      4.0     10.0     19.7
+  resize_ms       2.2      1.9      4.6      8.7
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=129.6s
+  fps    mean 11.6   p50 11.7   p5(slow tail) 8.4
+  face detected on 45% of frames
+  median face distance 527 mm
+  stage          mean      p50      p95      max
+  total_ms       86.4     85.2    119.2    203.6
+  infer_ms       50.9     34.6    101.1    144.8
+  landmark_ms    36.7      0.0     97.0    130.7
+  capture_ms     30.6     33.4     76.7    100.9
+  detect_ms      14.0     17.3     34.4     56.9
+  features_ms     5.0      4.2     10.1     16.5
+  resize_ms       2.2      2.0      4.2     14.1
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=132.0s
+  fps    mean 11.4   p50 11.5   p5(slow tail) 8.3
+  face detected on 62% of frames
+  median face distance 591 mm
+  stage          mean      p50      p95      max
+  total_ms       88.0     86.7    120.9    213.0
+  infer_ms       59.5     68.9    102.5    149.2
+  landmark_ms    49.2     68.2     98.6    149.0
+  capture_ms     22.3      9.4     71.7    111.3
+  detect_ms      10.0      0.0     34.2     57.8
+  features_ms     5.6      4.6     11.5     16.3
+  resize_ms       2.2      2.0      4.3      8.9
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=141.7s
+  fps    mean 10.6   p50 10.8   p5(slow tail) 7.7
+  face detected on 95% of frames
+  median face distance 590 mm
+  stage          mean      p50      p95      max
+  total_ms       94.4     92.7    129.4    189.7
+  infer_ms       79.4     80.5    108.6    156.8
+  landmark_ms    76.5     78.9    105.0    156.5
+  capture_ms      6.5      0.0     33.3     94.5
+  features_ms     5.7      4.6     11.8     41.1
+  detect_ms       2.5      0.0     27.5     51.8
+  resize_ms       2.3      1.9      5.2     10.3
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=142.3s
+  fps    mean 10.5   p50 10.7   p5(slow tail) 7.8
+  face detected on 97% of frames
+  median face distance 653 mm
+  stage          mean      p50      p95      max
+  total_ms       94.8     93.1    128.5    184.3
+  infer_ms       81.1     80.4    111.1    161.2
+  landmark_ms    79.0     79.5    106.8    160.2
+  features_ms     5.9      4.9     11.5     21.8
+  capture_ms      5.0      0.0     28.1     94.4
+  resize_ms       2.2      1.8      4.7     13.9
+  detect_ms       1.7      0.0     21.9     39.9
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
+opening /dev/video2 at 1280x720 MJPG ...
+  OK  auto_exposure                    want=1      got=1
+  OK  exposure_dynamic_framerate       want=0      got=0
+  OK  exposure_time_absolute           want=156    got=156
+  OK  focus_automatic_continuous       want=0      got=0
+  OK  focus_absolute                   want=30     got=30
+  BAD gain                             want=0      got=109
+  OK  white_balance_automatic          want=0      got=0
+  !! controls did not stick -- numbers below will be noisier than they should be. Fix this first.
+backend: litert
+
+--- warmup
+--- benchmarking input_size=1280
+
+  input_size=1280  frames=1500  wall=100.0s
+  fps    mean 15.0   p50 15.0   p5(slow tail) 13.9
+  face detected on 98% of frames
+  median face distance 639 mm
+  stage          mean      p50      p95      max
+  total_ms       66.6     66.5     72.0    130.6
+  infer_ms       45.0     45.4     50.6     73.3
+  landmark_ms    44.0     45.0     49.0     58.1
+  capture_ms     16.8     16.2     22.9     55.9
+  features_ms     3.0      3.0      3.9     10.4
+  resize_ms       1.4      1.3      1.6      3.5
+  detect_ms       0.7      0.0     11.5     15.0
+INFO: Created TensorFlow Lite XNNPACK delegate for CPU.
