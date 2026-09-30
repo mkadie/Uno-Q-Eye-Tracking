@@ -73,9 +73,10 @@ the summary. One row in 1964 changes no conclusion, but a guard that misses a
 *negative* distance will miss a merely wrong one, and those do not announce
 themselves.
 
-**NOT YET DONE on this data:** per-visitor breakdown, learning-within-session,
-and whether the 9-point linear grid held up in a queue. The file is
-`study_data/bff_gaze_study.jsonl`.
+**STILL UNREAD in this data:** learning *within* a session (does a visitor
+improve over their 12 throws?), and what separates the 13 visitors who got
+nothing from the rest. That second question is the highest-value one left.
+The file is `study_data/bff_gaze_study.jsonl`.
 
 **Gate 1c bare-faced: 3.27° mean / 5.56° p95** (26 held-out targets). Against
 `PLAN.md`'s fork — Path B is fps ≥ 15 and 2.0–3.5° — that is **Path B: build
