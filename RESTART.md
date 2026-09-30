@@ -1,6 +1,6 @@
 # RESTART — read this first after a crash or power loss
 
-Last updated: **2026-09-29** — faire data analysed, code is PUBLIC on GitHub.
+Last updated: **2026-09-30** — HEAD POINTING WORKS. Code public on GitHub.
 
 > **THE FAIRE RAN Fri 25 + Sat 26 Sep: 125 visitors, 2413 throws, p50 6.26
 > deg — and SUNDAY CAPTURED NOTHING.** 87% of visitors got a median error of
@@ -26,6 +26,16 @@ Last updated: **2026-09-29** — faire data analysed, code is PUBLIC on GitHub.
 > like a software bug). The governor was reset to `performance` after the
 > last boot; it reverts to `schedutil` on EVERY reboot, so any timing taken
 > across one of these crashes is void.
+
+> **HEAD POINTING WORKS, AND IT IS THE ANSWER FOR THE 10% GAZE FAILED.**
+> An ArUco tag on the glasses drives the same AAC board. First run
+> 2026-09-30: **100% detection, NOT LOST ONCE in 359 frames**, 5 of 5
+> calibration points, RMS 0.079 of screen, 23 dwell selections. Subject:
+> "almost no drift, went right to my selections." Median trail spread
+> **1060 -> 368 px on the vertical axis** against gaze, same subject, same
+> day. **The tag on this rig is id 2, NOT the id 0 head_track.md names** --
+> a wrong id reads exactly like bad lighting and cost an hour. It is the 4th
+> kiosk row. See RESULTS.md § "Head pointing from an ArUco tag".
 
 > **THE CODE IS PUBLISHED: <https://github.com/mkadie/Uno-Q-Eye-Tracking>**,
 > public, MIT. Push with `git push origin master` as normal. Two things about
@@ -60,6 +70,7 @@ numbers; this is the orientation.
 | fixation protocol | **REBUILT** — the old one measured the subject's drift, not the tracker |
 | faire kiosk | **RUNS on hardware** — auto-login confirmed, all three rows launch |
 | gaze talker | **selects by DWELL since 2026-09-30.** Before that it needed a key it could not receive |
+| head talker | **WORKS 2026-09-30** — tag id 2 on the glasses, 0 losses in 359 frames, RMS 0.079 |
 | kiosk with NO KEYBOARD | **fixed 2026-09-24** — every app can now be left by mouse alone. Untested by hand. |
 | calibration FIT | **two bugs found and fixed** — see below. This is where the gain came from, not the glasses. |
 | the model | **linear (7 par) beats degree-2 (66 par) at every point count tried** |
@@ -499,6 +510,49 @@ saturated stroke. That rule only holds on frames that HAVE annotations, so
 `tools/deidentify.py --raw` turns it off. **Use `--raw` on every plain
 camera frame.**
 
+## Head pointing: how to run it, and the two traps
+
+Built 2026-09-30 to `head_track.md` (Drive, `claude/sip-n-puff/`, with
+`headtrack.py` as the reference implementation beside it).
+
+    bin/tagcheck                 # 20 s: is the tag seen, how big, how fast
+    bin/talker --mode head       # calibrate (5 pts) then use the board
+    bin/menu                     # row 4 does both, with --tag-id 2
+
+**TRAP 1: the tag on this rig is id 2.** `head_track.md` specifies id 0 and
+says 0-3 were printed. `tagcheck` reported **0% detection** and its advice
+pointed at lighting, glare and distance -- all wrong. The fix was to sweep
+all 27 ArUco dictionaries over ONE captured frame, which found it instantly.
+**If detection is 0%, suspect the id before the optics.** Defaults now point
+at id 2 everywhere.
+
+**TRAP 2: do NOT drop to 960x540 to chase frame rate**, whatever the spec
+says. Measured: 1280x720 gives 19.0 fps camera-alone and **100%** detection;
+960x540 gives 22.2 fps and **67%**, because the tag falls to ~5.5 px per cell
+and the corners stop resolving. **Detection costs 0.9 fps** -- the shortfall
+against the spec's 25 is the sensor and the MJPEG decode, not the tracker,
+which is why `tagcheck` reports fps instead of gating on it.
+
+**Design decisions worth not re-litigating:**
+
+- **In-process, not uinput.** The spec offers a uinput virtual mouse; `evdev`
+  is not installed here and `/dev/uinput` is root-only, so that needs a
+  package AND a udev rule. `bin/talker` already computes its own cursor from
+  a feature source, so head mode is just another source. No packages, no
+  udev, no root.
+- **Affine, not the ridge polynomial.** Head-to-screen is near-linear: six
+  parameters, five points over-determine them. Gaze needs ridge because 66
+  parameters over 9 points fits noise; there is no such danger here.
+- **Head mode loads NO backend.** No face mesh, no LiteRT, no threads.
+- **A lost tag freezes the dwell, not just the pointer.** Holding the pointer
+  alone would let the clock run out on the cell it was parked on and speak a
+  word nobody asked for.
+- **Calibration collects by SAMPLE COUNT (18), not by clock**, and judges
+  jitter with a scaled MAD rather than a standard deviation. The spec's 0.7 s
+  window assumes 30 fps; at 17 it gave exactly 8 samples and all five points
+  failed their first attempt. **This change is UNMEASURED** -- the 5-of-5 run
+  it replaces was already good. Worth a comparison run.
+
 ## Capturing screenshots without HDMI capture
 
 `bin/talker --record DIR` writes the canvas straight from the render loop —
@@ -628,7 +682,10 @@ Try both; they are different images and the landmark model may prefer either.
 
 ## Still open, roughly in priority order
 
-0. **Launch the eyes row from `bin/menu` once.** The `--dwell` fix is on the
+0. **Re-run the head calibration** and check whether the sample-count
+   protocol removes the per-point retries. It is the only change since the
+   good 5-of-5 run and it has not been tried against a real tag.
+0a. **Launch the eyes row from `bin/menu` once.** The `--dwell` fix is on the
    board but has only been run by launching `bin/talker` directly. One
    minute, and it is the path a visitor takes.
 0b. **Test the four kiosk exits by hand** — 5 minutes, and nothing else on
