@@ -1,3 +1,75 @@
+# Head pointing from an ArUco tag, 2026-09-30 — first run
+
+A printed DICT_4X4_50 tag on the glasses, tracked by the same C920x, driving
+the same 3x2 AAC board. Built to `head_track.md`. **This is not a better eye
+tracker; it is the input for the head that eye tracking could not serve** --
+gaze holds to about 15 degrees of head turn and is gone by 20.
+
+| | measured |
+|---|---|
+| tag detection | **100%** (209/209), side 42.8 px = 7.1 px per cell |
+| **tag lost during use** | **0 of 359 frames** |
+| calibration | **5 of 5 points**, RMS **0.079 of screen** |
+| tag span / gain | 105 x 98 px for the whole screen; 149 x 140 px per screen width |
+| fps | 17.3 with detection; camera alone 19.0 |
+| ROI efficiency | 208 of 209 frames on the cheap crop |
+| completed dwell selections | 23 in one sitting |
+
+**Subject report: "almost no drift, and it went right to my selections."**
+
+**The comparable number, same subject and board and day, same 90-sample
+trail, same 1.2 s dwell:** median trail spread fell from **1473 x 1060 px
+(eye)** to **1178 x 368 px (head)**. The VERTICAL axis is the striking one --
+**1060 -> 368 px, 65% tighter.** Horizontal fell only 20%, which is expected:
+horizontal travel is mostly deliberate movement across a 3-wide board, where
+vertical travel on a 2-high board is mostly noise.
+
+**Do NOT read across these two sessions for anything else.** They were not a
+controlled A/B: the eye session deliberately included large head turns to
+provoke the cliff, and it ran 991 frames against 359. Cell-lock rate came out
+at 61% in both, and selections per frame favour head by 39%, but neither
+survives that difference in task. The trail spread is comparable because it
+is a per-frame property of the same fixed-length window.
+
+**`src` "lost" counting exists only in head mode.** Eye mode does not report
+a lost face at all -- when the mesh fails, `gx` is None and the cursor
+silently falls back to the stale mouse position. So "0% lost" for the eye row
+of any comparison is an absence of instrumentation, not a measurement.
+
+## The tag is id 2, and a wrong id looks exactly like bad lighting
+
+`bin/tagcheck` reported **0% detection** and its advice pointed at lighting,
+glare and working distance. All wrong: the detector was asked for marker 0
+and correctly found nothing. Sweeping all 27 ArUco dictionaries over one
+captured frame found it immediately -- DICT_4X4_50 **id 2**, 43.6 px side.
+`head_track.md` specifies id 0; the object in the room wins. Defaults now
+point at id 2 and the kiosk row passes it explicitly.
+
+## 960x540 is not the fix for the frame rate
+
+The spec suggests dropping resolution if fps < 25. Measured both:
+
+| | camera alone | with detection | detection rate |
+|---|---|---|---|
+| 1280x720 | 19.0 fps | 18.1 fps | **100%** |
+| 960x540 | 22.2 fps | 20.1 fps | **67%** |
+
+**Detection costs 0.9 fps.** The shortfall against the spec's 25 is the
+sensor and the MJPEG decode, not the tracker, so `tagcheck` reports fps
+rather than gating on it -- a gate there fails a rig that is working
+perfectly. And the smaller frame trades a third of the detections for 2 fps,
+because the tag falls to ~5.5 px per cell and the corners stop resolving.
+
+## Calibration retried on every point, and the reason is frame rate
+
+Every one of the 5 points logged `unstable (8 samples)` before passing. The
+spec's 0.7 s collect window assumes 30 fps and yields ~21 samples; at this
+board's 17 fps it yields exactly 8, which is `MIN_SAMPLES`. One twitch then
+fails the 3 px stability test. **The collect loop should be sample-count
+driven rather than time driven** so it adapts to whatever fps the board
+delivers. Not yet changed -- the calibration succeeded 5 of 5 and the result
+is good, so this is a smoothness fix, not a correctness one.
+
 # Maker Faire, 2026-09-25/26 — 125 visitors, 2413 throws
 
 The first data from people who are not the developer. `analyse_study.py` over

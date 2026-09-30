@@ -479,6 +479,9 @@ def main():
     ap.add_argument("--windowed", action="store_true")
     ap.add_argument("--seed", type=int, default=None)
     args = ap.parse_args()
+    # Derived here, at the top, because half a dozen branches below read it
+    # -- including a signal handler registered before the camera is opened.
+    head = (args.mode == "head")
 
     cfg = config.load(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "config.toml"))
@@ -549,7 +552,6 @@ def main():
         print("audio : all %d presses have a clip" % len(have))
 
     cam = be = mapper = None
-    head = (args.mode == "head")
     tracker = None
     if not args.mouse:
         c = cfg["camera"]

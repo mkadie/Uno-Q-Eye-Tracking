@@ -11,6 +11,24 @@ deadlines.
 
 ## What it looks like
 
+![Head pointing with an ArUco tag](docs/talker_head_pointing.png)
+
+**Head pointing.** A printed ArUco tag on the glasses drives the same AAC
+board, with the same dwell-to-speak. The trail shows the head moving
+deliberately between cells and settling — tight clusters where it paused,
+a clean path between — and the green bar is a selection completing on
+*Cracker*.
+
+This exists because **gaze does not degrade as the head turns, it stops**:
+71% valid out to 15°, **5% beyond 20°**, measured over 2413 faire throws.
+Past that the camera has one eye to work with. A tag on the glasses is still
+square to the camera there, and in its first run it was **not lost once in
+359 frames**, with 5 of 5 calibration points and an RMS of 0.079 of the
+screen. Head-to-screen is near-linear, so the model is a 6-parameter affine
+rather than the ridge-regularised polynomial gaze needs.
+
+
+
 ![Gaze trail on the AAC board](docs/talker_gaze_trail.png)
 
 The T-Rex Talker board under eye control, captured on the UNO Q itself. The
