@@ -360,6 +360,51 @@ def calibrate_head(cam, canvas, tracker, cal_path, W, H, tag_id):
 
     Returns (TagMapper, rms, span_px) or (None, reason, None).
     """
+    # WAIT FOR THE TAG BEFORE ASKING FOR ANYTHING.
+    #
+    # MEASURED 2026-09-30, and the first reading of it was WRONG in a way
+    # worth recording. A trial showed 1% detection then 80% then 80% on the
+    # same dark screen, and I concluded the sensor needed ~8 s to settle.
+    # It did not: the room lights had been off for the first trial and came
+    # on during it. Frame mean barely moved (13.9 -> 17.2) because the lamp
+    # lights the FACE, not the scene, which is exactly why that number
+    # failed to give the confound away -- the same trap as "face brightness
+    # does not predict rim detection", now on its third appearance.
+    #
+    # With the lights on the tag is acquired in 0.5 s. With them off it may
+    # never come. Either way calibration used to start immediately and spend
+    # its first points collecting nothing, then blame the user's head for
+    # being unstable. Wait for real evidence the tag is visible instead: a
+    # run of consecutive hits, shown honestly on screen, so nobody is left
+    # staring at a dot that cannot work yet -- and so a dark room reports
+    # itself as a dark room instead of as five unstable points.
+    ready = 0
+    t_wait = time.perf_counter()
+    while ready < 5 and time.perf_counter() - t_wait < 20.0:
+        canvas[:] = (16, 16, 18)
+        cv2.putText(canvas, "finding the tag on your glasses...",
+                    (int(W * 0.5) - 420, int(H * 0.5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.3, (200, 200, 210), 2,
+                    cv2.LINE_AA)
+        cv2.putText(canvas, "face the camera and hold still",
+                    (int(W * 0.5) - 300, int(H * 0.5) + 70),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (120, 120, 130), 2,
+                    cv2.LINE_AA)
+        cv2.imshow(WIN, canvas)
+        if (cv2.waitKey(1) & 0xFF) == ord("q"):
+            return None, "aborted", None
+        frame = cam.read()
+        if frame is None:
+            continue
+        if tracker.find(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)) is not None:
+            ready += 1
+        else:
+            ready = 0
+    if ready < 5:
+        return None, ("tag never appeared in 20 s -- run bin/tagcheck"), None
+    print("tag acquired after %.1f s; calibrating"
+          % (time.perf_counter() - t_wait))
+
     feats, tgts = [], []
     for i, (fx, fy) in enumerate(tagtrack.CAL_POINTS):
         pt = (int(fx * W), int(fy * H))

@@ -60,6 +60,41 @@ rather than gating on it -- a gate there fails a rig that is working
 perfectly. And the smaller frame trades a third of the detections for 2 fps,
 because the tag falls to ~5.5 px per cell and the corners stop resolving.
 
+## The sample-count protocol: RMS halved, retries nearly gone
+
+Re-run 2026-09-30 after the change, lights on:
+
+| | first run (0.7 s window, std) | after (18 samples, MAD) |
+|---|---|---|
+| samples per point | **8** (the floor) | **18** |
+| points needing a retry | **5 of 5** | **2 of 5** |
+| **RMS** | 0.0793 of screen | **0.0359** |
+| tag span / gain | 105 x 98 px | 73 x 46 px (higher gain) |
+
+**RMS more than halved.** The retry message now prints the jitter that
+caused it (6.8 px and 10.8 px against a 3.0 px threshold), so a failed point
+says how far off it was instead of only that it failed.
+
+## A dark room reports itself as five unstable points
+
+A calibration run with the room lights off collected **0 samples on 4 of 5
+points** and reported them as "unstable" -- blaming the head for not holding
+still when the tag was simply never seen. With the lights on the tag is
+acquired in **0.5 s**.
+
+**I misread this first, and the misreading is the interesting part.** A trial
+gave 1% detection on a dark screen, then 80%, then 80% again on the same dark
+screen, and I concluded the camera needed ~8 s to settle -- citing frame mean
+barely moving (13.9 -> 17.2) as evidence that light was not the variable. The
+room lights had in fact been switched on during the trial. **Frame mean did
+not give it away because the lamp lights the FACE, not the scene** -- which
+is the third appearance of the same trap, after camera `gain` pinned at its
+ceiling and face brightness failing to predict rim detection. A whole-frame
+statistic cannot see a light aimed at a head.
+
+`calibrate_head` now waits for five consecutive tag detections before showing
+the first dot, with the wait visible on screen, so a dark room says so.
+
 ## Calibration retried on every point, and the reason is frame rate
 
 Every one of the 5 points logged `unstable (8 samples)` before passing. The
