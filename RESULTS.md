@@ -99,6 +99,73 @@ write never landed. `json.loads` died on it and took all 137 sessions with
 it. Stripping the NULs recovers the line intact, so nothing was lost, but
 `analyse_study.load()` now skips unparsable lines and **prints the count**.
 
+## What separated the visitors who got nothing: HEAD TURN, and it is a cliff
+
+14 of 136 sessions (10%) produced not one valid throw. Four hypotheses were
+put to the data; **one dominates and one is refuted.**
+
+**Head turn is a cliff at ~20°, not a slope.** Across all 2594 throws:
+
+| \|head turn\| | throws | valid | p50 err |
+|---|---|---|---|
+| 0–5° | 955 | **78%** | 5.69° |
+| 5–10° | 532 | 71% | 6.22° |
+| 10–15° | 313 | 58% | 7.08° |
+| 15–20° | 199 | 63% | 10.41° |
+| **20°+** | 591 | **5%** | 12.84° |
+
+Pitch behaves the same way: 72% valid below 5°, **4% beyond 20°**. Past about
+20° the tracker does not degrade, it stops — which is exactly the operator's
+read at the booth, that the camera could only see one eye.
+
+**Every one of the 14 failed sessions sat beyond that line.** Median
+\|turn\| was ≥ 11.8° in all 14 and ≥ 25° in 10 of them, against 1.9° for
+sessions that worked. `head_turned` fired on 71% of their throws and
+`head_pitched` on 60%, versus 16% and 9%. Face detection ran at 0.75 against
+1.00, and in four sessions the face was **never detected at all**.
+
+**Distance is REFUTED as the differentiator.** The failed sessions' median
+\|dist − cal\| was **0.0 mm** — they did not move — against 7.1 mm for the
+sessions that worked. They sat at 543 mm vs 514 mm, both inside the band.
+Only 3 of 14 sat outside 500–650 (736, 606, 361 mm) carrying `bad_distance`.
+Distance costs accuracy once tracking works (5.30° vs 8.93°, above); it is
+not what makes tracking fail outright.
+
+**"Clicked and walked away" is real but small: 4 of 14** threw twice or fewer.
+One threw once with a median pitch of 135° — looking somewhere else entirely.
+
+**Three of the 14 stayed and kept trying** — 53, 55 and 28 throws — and never
+got a single valid one, at \|turn\| of 32°, 60° and 46°. Those three are the
+honest product failure. They wanted it to work, and nothing on screen told
+them their head was the problem.
+
+**The fix is already computable.** `head_turn_deg` is measured per frame and
+is what the flag fires on. Nothing showed it to the player. A cue at 15° —
+"turn to face me" — would have recovered most of this 10%, and costs no new
+measurement.
+
+## The steadiest visitor beat every lab run
+
+Saturday 11:47, 40 throws, 25 valid, reaching level 2:
+
+| | this visitor | faire median | developer best |
+|---|---|---|---|
+| median error | **2.11°** | 6.26° | 3.27° |
+| p95 | **5.30°** | 20.60° | 5.56° |
+| best single throw | **0.55°** | — | — |
+| fixation scatter | **12.0 px** | 24 px | 15.0 px |
+
+Her head was being held still by a companion throughout tuning and play. Head
+\|turn\| 10.0°, \|pitch\| 6.5°, and a fixation scatter half the faire median —
+the steadiness shows up in scatter rather than in pose, which is what holding
+a head produces: a fixed offset, not a moving one.
+
+**This is the ceiling the hardware can reach with a cooperative head, and it
+is better than anything measured in the lab.** It also says the remaining
+error is not sensor noise — the same camera, model and fit delivered 2.11° to
+a person who held still. Whatever is costing the other visitors 4° is
+posture, not silicon.
+
 ## THE RTC HAS NO BATTERY, AND IT FAKES THE CRASH LOG
 
 Every boot:
