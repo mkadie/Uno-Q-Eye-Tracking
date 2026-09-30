@@ -55,9 +55,18 @@ ITEMS = [
     # flashing back over a game that is still starting.
     ("Bunny Feeding Frenzy", "look at a bunny to feed it",
      ["bash", "-lc", "BFF_FOREGROUND=1 %s/run_study.sh" % BUNNY]),
-    ("T-Rex Talker  —  eyes", "look at a word, then press SPACE",
+    # --dwell is what makes this usable by the person it is FOR. Without it
+    # selection needs SPACE, ENTER or a click, and the AAC case is someone
+    # with neither hand nor keyboard -- gaze alone could highlight a word
+    # and never speak it. 1.2 s against --hold 3: long enough that reading
+    # a cell does not fire it (the Midas touch problem), short enough that
+    # a sentence is not a chore. Measured time-to-acquire was 8.7 s on a
+    # MOVING 64 px bunny; a stationary 640 x 540 cell is far easier.
+    ("T-Rex Talker  —  eyes", "look at a word to speak it",
      ["python3", os.path.join(HERE, "talker"),
-      "--menu", TALKER_MENU, "--sounds", TALKER_SOUNDS]),
+      "--menu", TALKER_MENU, "--sounds", TALKER_SOUNDS, "--dwell", "1.2"]),
+    # No --dwell here on purpose: a pointer RESTS where it was left, so a
+    # dwell would speak whatever the cursor happens to be parked on.
     ("T-Rex Talker  —  mouse", "point at a word and click",
      ["python3", os.path.join(HERE, "talker"),
       "--menu", TALKER_MENU, "--sounds", TALKER_SOUNDS, "--mouse"]),
