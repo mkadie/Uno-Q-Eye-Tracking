@@ -2,15 +2,22 @@
 
 Last updated: **2026-09-29** — the faire is DONE and its data is off the board.
 
-> **THE FAIRE RAN 2026-09-27: 137 visitors, 2732 throws, p50 6.26 deg.** The
+> **THE FAIRE RAN Fri 25 + Sat 26 Sep: 125 visitors, 2413 throws, p50 6.26
+> deg — and SUNDAY CAPTURED NOTHING.** 87% of visitors got a median error of
+> 10 deg or better; **10% got zero valid throws**. All 136 sessions ran
+> `cal_points = 9`. The
 > data is pulled to `study_data/bff_gaze_study.jsonl` (it existed ONLY on a
 > board that has crashed repeatedly -- back it up first, always). Headline and
 > caveats are in `RESULTS.md`; only the headline has been read. Deadline is
 > **30 Sep 2026**, i.e. tomorrow.
 
-> **THE BOARD CRASHED TWICE on the evening of 2026-09-24.** `last -x reboot`
-> shows boots at 22:37 and 23:24 both ending in `crash`, and the 23:54 boot
-> is the one now up. No cause found: **no** undervoltage or over-current in
+> **THE BOARD CRASHED TWICE on the evening of 2026-09-24** — boots at 22:37
+> and 23:24 both ending in `crash`. Those two are real: distinct times, the
+> network was up, NTP was syncing. **Do NOT read any later `last -x reboot`
+> row as a dated crash** — the RTC has no battery, reads 1970 on every boot,
+> and systemd advances it to the last synced value, so a netless board prints
+> the same frozen "Sep 27 08:02" for every power-up. See RESULTS.md § "THE RTC
+> HAS NO BATTERY". No cause found: **no** undervoltage or over-current in
 > `dmesg`, **no** OOM, temps 42-47 C, 2.4 GB free. Nothing was being pushed
 > at the time. Two unexplained crashes in one evening is a faire risk in its
 > own right -- **check `last -x reboot` at the START of the next session**,

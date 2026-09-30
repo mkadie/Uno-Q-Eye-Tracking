@@ -19,17 +19,34 @@ for people who already built the sip-n-puff rather than a rewrite.
 
 ## Where it stands
 
-**THE FAIRE HAPPENED. 137 visitors, 2732 throws, 2026-09-27.** This is the
-first data from people who are not the developer, and it is the single most
-important thing in this document. Headline, from the project's own
-`analyse_study.py`:
+**THE FAIRE HAPPENED: Fri 25 + Sat 26 Sep 2026, 125 visitors, 2413 throws.**
+The first data from people who are not the developer, and the single most
+important thing in this document. All times PT; **the board logs UTC**, and
+mixing the two invents a day that does not exist.
 
-| | |
-|---|---|
-| sessions / throws | **137 / 2732** |
-| valid after auto-flags | 1478 (**54%**) |
-| accuracy p50 / p95 | **6.26° / 20.60°** |
-| seating p50 | 495 mm (p5–p95 **394–637**) |
+| day (PT) | sessions | throws | valid | p50 | p95 | hrs |
+|---|---|---|---|---|---|---|
+| Fri 25 Sep | 26 | 541 | 51% | 6.06° | 17.41° | 3.3 |
+| Sat 26 Sep | 99 | 1872 | 54% | 6.74° | 22.27° | 14.3 |
+| **Sun 27 Sep** | **0** | **0** | — | — | — | — |
+
+Pooled over both days: **p50 6.26° / p95 20.60°**, 1478 of 2732 throws valid
+(54%), seating p50 495 mm (p5–p95 394–637). **All 136 sessions used
+`cal_points = 9`** — the short grid plus the linear model, in the field, all
+weekend. That configuration held.
+
+**THE RIG RAN THREE DAYS AND CAPTURED TWO.** The last throw is Sun 00:33 PT
+and the last network time sync Sun 01:02; no session carries the frozen
+post-failure timestamp, so the game did not run and silently fail to log — it
+did not run at all. **A third of the exhibition produced no data and nothing
+on the rig said so at the time.** Ship a heartbeat before the next one.
+
+**The per-visitor numbers matter more than the pooled ones** (124 session
+summaries): median error per visitor p50 **5.78°** (IQR 4.48–7.02), **87% of
+visitors at ≤10°**, 74% at ≤7°, 36% at ≤5° — and **10% (13 visitors) got ZERO
+valid throws.** A pooled median over throws is dominated by whoever stayed
+longest and cannot show you the person who sat down, got nothing, and left.
+Quote the 87% and the 10% together.
 
 **Read that 6.26° against the developer's 3.27° and believe the 6.26.** One
 practised subject who knows to hold still is not the population. Two findings
@@ -287,9 +304,21 @@ test that would actually decide the interface.
 
 ## Crash-damaged logs, and the board's stability
 
-**The board crashed repeatedly through the faire week** (2026-09-24 twice,
-more on 09-27), with **no cause visible**: no undervoltage or over-current in
-`dmesg`, no OOM, temps 42–47 °C, memory free. Two consequences worth carrying:
+**The RTC has no battery, and it fakes the crash log.** Every boot reads
+`1970-01-01` from `rtc-pm8xxx`, and systemd then advances the clock to the
+last value timesyncd saved — frozen at the board's last networked moment. So
+`last -x reboot` prints a row of boots all bearing the *same* timestamp, and
+they are not simultaneous crashes: they are N power-ups wearing one frozen
+stamp. **Boot times, crash times and durations are fiction whenever the board
+has no network**, which at a faire is most of the time. Dated crashes are only
+believable when the clock was demonstrably syncing (2026-09-24: two, real).
+
+What survives as evidence: 11 boot records, several logging only ~92 lines
+before dying mid-`sysinit.target` with no cause recorded. That is the shape of
+a power fault, not a software one — the board asks for 5V @ 3A, and
+undervoltage here presents as random instability that reads like a bug.
+
+Two more consequences worth carrying:
 
 - **A crash can splice NUL bytes into an open log.** Line 1633 of the faire
   data came back as 234 NULs spliced in front of an otherwise intact record
@@ -347,9 +376,14 @@ lamp measured 3.2× steadier — far more than a 12 px rim of white could buy.
    actual display, so a board that comes up at 1024x768 is not drawn broken.
 8. Repeat the 3.27 deg accuracy run in good light. The schedule still rests on
    one dim-light run sitting 0.23 deg inside a decision boundary.
-9. **Analyse the faire data properly** — 137 sessions are loaded and only the
-   headline has been read. Per-visitor breakdown, learning within a session,
-   and whether 9 points + linear held up in a queue.
-10. **Find the crashes.** No cause in `dmesg` across several. Power is the
-   first suspect (the board wants 5V @ 3A, and undervoltage here presents as
-   random instability that reads like a software bug).
+9. ~~Analyse the faire data~~ **PARTLY DONE** — per-day, per-visitor and
+   hourly cuts are in `RESULTS.md`. Still open: learning *within* a session
+   (does a visitor improve over their 12 throws?), and what distinguishes the
+   13 visitors who got nothing from the rest. That second one is the highest
+   value question left in this dataset.
+10. **Ship a heartbeat.** A third of the exhibition recorded nothing and
+   nobody noticed until three days later. Anything that writes a line per
+   minute, visible on the kiosk, would have caught it.
+11. **Find the crashes** — and fix the clock first, because without a
+   battery-backed RTC or an NTP-at-boot guarantee you cannot tell when
+   anything happened. Power is the first suspect for the crashes themselves.

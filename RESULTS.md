@@ -1,7 +1,36 @@
-# Maker Faire, 2026-09-27 — 137 visitors, 2732 throws
+# Maker Faire, 2026-09-25/26 — 125 visitors, 2413 throws
 
 The first data from people who are not the developer. `analyse_study.py` over
-`study_data/bff_gaze_study.jsonl`.
+`study_data/bff_gaze_study.jsonl`. All times America/Los_Angeles — **the board
+logs UTC and the faire is PT**, and mixing the two invents a day that does not
+exist (it briefly showed "49 Sunday sessions" that were Saturday evening).
+
+## THE RIG RAN THREE DAYS AND CAPTURED TWO
+
+| day (PT) | sessions | throws | valid | p50 | p95 | clock | hrs |
+|---|---|---|---|---|---|---|---|
+| Tue 22 Sep | 3 | 54 | 92% | 6.03 | 14.75 | 19:40–20:02 | 0.4 |
+| Wed 23 Sep | 1 | 39 | 97% | 5.23 | 8.36 | 17:18–17:20 | 0.0 |
+| Thu 24 Sep | 6 | 92 | 92% | 4.41 | 7.79 | 16:13–16:37 | 0.4 |
+| **Fri 25 Sep** | **26** | **541** | 51% | 6.06 | 17.41 | 10:14–13:31 | 3.3 |
+| **Sat 26 Sep** | **99** | **1872** | 54% | 6.74 | 22.27 | 09:33–23:50 | 14.3 |
+| Sun 27 Sep | 1 | 10 | 50% | 5.78 | 8.84 | 00:32–00:33 | 0.0 |
+
+Tue–Thu are the developer. **Friday and Saturday are the faire: 125 sessions,
+2413 throws.** The Sunday row is one session at 00:32 — Saturday night rolling
+past midnight, not a third day.
+
+**SUNDAY CAPTURED NOTHING.** The last throw is Sun 00:33 PT and the last
+successful network time sync is Sun 01:02 PT; after that the board never
+recorded another session. No session carries the frozen post-failure
+timestamp either, so the game did not run and quietly fail to log — it did
+not run at all. Whether the board would not boot or was not started cannot be
+settled from its own logs (see the RTC finding below). **A third of the
+exhibition produced no data and nothing on the rig said so at the time.**
+
+**All 136 sessions used `cal_points = 9`** — the short grid plus the linear
+model, in the field, all weekend. That is the configuration the schedule
+assumed and it held.
 
 | | |
 |---|---|
@@ -39,13 +68,72 @@ seating distance reached the summary. One row in 1964 changes nothing, but a
 guard that misses a *negative* distance will miss a merely wrong one, and
 those do not announce themselves.
 
+## Per visitor — the number that decides whether this is demoable
+
+From the 124 session summaries (13 sessions ended with no summary at all):
+
+| | |
+|---|---|
+| throws per visitor | p50 **12**, p95 58, max 148 |
+| session median error | p50 **5.78°**, IQR 4.48–7.02, worst 33.74° |
+| visitors with median ≤ 5° | 41 / 111 (**36%**) |
+| visitors with median ≤ 7° | 83 / 111 (**74%**) |
+| visitors with median ≤ 10° | 97 / 111 (**87%**) |
+| **visitors with ZERO valid throws** | **13 (10%)** |
+
+**One visitor in ten got nothing at all.** That is the number to quote, not
+the 6.26° pooled median — a pooled average over throws is dominated by the
+visitors who stayed longest, and it cannot show you the person who sat down,
+got no tracking, and left. 87% at 10° or better with a 10% total-failure rate
+is a fair one-line summary of the weekend.
+
+**Saturday by hour shows no fatigue trend and no lighting trend** — valid rate
+swung 13%–78% and p50 3.58°–13.31° hour to hour with no ordering. The 22:00
+hour is the odd one: 78% valid (the best) at 13.31° p50 (the worst), which is
+a calibration that held its lock while pointing somewhere wrong. Per-hour
+variation is dominated by *who* sat down, not by the time of day.
+
 **The log was crash-damaged and nearly unreadable.** Line 1633 came back with
 234 NUL bytes spliced in front of it -- ext4 had allocated the block but the
 write never landed. `json.loads` died on it and took all 137 sessions with
 it. Stripping the NULs recovers the line intact, so nothing was lost, but
 `analyse_study.load()` now skips unparsable lines and **prints the count**.
 
-**Not yet done:** per-visitor breakdown, learning within a session, and
+## THE RTC HAS NO BATTERY, AND IT FAKES THE CRASH LOG
+
+Every boot:
+
+```
+rtc-pm8xxx ...: setting system clock to 1970-01-01T00:00:10 UTC (10)
+systemd[1]: System time advanced to timestamp on
+            /var/lib/systemd/timesync/clock: Sun 2026-09-27 08:02:32 UTC
+```
+
+The hardware clock reads **1970** on every power-up. systemd then advances it
+to the last value saved by timesyncd — frozen at **Sun 2026-09-27 08:02:32
+UTC**, the last time the board had a network. Until NTP resyncs, every boot
+therefore reports that identical timestamp.
+
+**So `last -x reboot` prints a row of boots all at "Sep 27 08:02" and they are
+not six crashes at one moment — they are N power-ups wearing the same frozen
+stamp.** Boot times, crash times and durations from `wtmp` or
+`journalctl --list-boots` are **fiction** whenever the board has no network.
+This supersedes the earlier note in `RESTART.md` that read those rows as
+dated crashes; the 2026-09-24 crashes stand (distinct times, network up,
+NTP synced), the "more on 09-27" reading does not.
+
+What survives as evidence: there are 11 boot records, and several logged only
+~92 lines before ending — they died within seconds of starting init, mid
+`sysinit.target`, with nothing logged as a cause. That is the shape of a power
+problem, not a software one. The board asks for 5V @ 3A.
+
+**Two consequences for any future run:** timestamps in the study log are
+`time.time()` and inherit the same frozen clock, so a session recorded after a
+netless boot is stamped with the last sync — and **`bin/probe` should refuse
+to start, or at minimum shout, when the clock is older than the newest line in
+the study log.**
+
+**Not yet done:** learning within a session, and
 whether 9 points + linear held up in a queue.
 
 # Results
