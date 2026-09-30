@@ -85,7 +85,7 @@ def drawn_mask(img):
     return cv2.dilate(m, np.ones((3, 3), np.uint8), iterations=1)
 
 
-def deidentify(path):
+def deidentify(path, keep_overlay=True):
     img = cv2.imread(path)
     if img is None:
         return path, "unreadable"
@@ -113,8 +113,9 @@ def deidentify(path):
     keep = keep[..., None]
 
     out = (img * keep + wiped * (1 - keep)).astype(np.uint8)
-    d = drawn_mask(img).astype(bool)
-    out[d] = img[d]
+    if keep_overlay:
+        d = drawn_mask(img).astype(bool)
+        out[d] = img[d]
     cv2.imwrite(path, out)
     kept = float(keep.mean())
     return path, ("%d face(s), %.0f%% of frame kept sharp"
@@ -122,6 +123,15 @@ def deidentify(path):
 
 
 if __name__ == "__main__":
-    for p in sys.argv[1:]:
-        name, how = deidentify(p)
-        print("  %-34s %s" % (os.path.basename(name), how))
+    # --raw: the image carries no analysis overlay, so nothing must be
+    # exempted from the wipe. MEASURED 2026-09-30: run WITHOUT this on a
+    # plain camera frame, the pure-colour test that rescues drawn strokes
+    # also rescued the blue lamp glow in the background -- a saturated
+    # highlight is indistinguishable from a saturated annotation, and the
+    # rule only holds on frames that actually have annotations.
+    args = [a for a in sys.argv[1:] if a != "--raw"]
+    keep_overlay = "--raw" not in sys.argv[1:]
+    for p in args:
+        name, how = deidentify(p, keep_overlay=keep_overlay)
+        print("  %-34s %s%s" % (os.path.basename(name), how,
+                                "" if keep_overlay else "  (no overlay kept)"))

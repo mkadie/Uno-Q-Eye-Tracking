@@ -43,6 +43,39 @@ def _read_state():
             int(dp.group(1)), int(dp.group(2)), int(dp.group(3)))
 
 
+_LOCKER = ("light-locker", "xscreensaver", "gnome-screensaver",
+           "mate-screensaver", "xfce4-screensaver")
+
+
+def _pause_locker():
+    """Stop a session locker for the life of the tool.
+
+    MEASURED 2026-09-30: `xset s off` is NOT enough. light-locker runs its
+    own timer and put the lock screen in front of a running talker, which on
+    this board is unrecoverable -- the kiosk has no keyboard, so a visitor
+    cannot type a password to get back. A locker on a kiosk is not a
+    security feature, it is a way to end the exhibit.
+
+    SIGSTOP rather than kill: the process comes back on SIGCONT at exit, so
+    this does not quietly disarm the locker on someone's desktop forever.
+    """
+    for name in _LOCKER:
+        try:
+            subprocess.run(["pkill", "-STOP", "-x", name],
+                           capture_output=True, timeout=5)
+        except Exception:
+            pass
+
+
+def _resume_locker():
+    for name in _LOCKER:
+        try:
+            subprocess.run(["pkill", "-CONT", "-x", name],
+                           capture_output=True, timeout=5)
+        except Exception:
+            pass
+
+
 def hold(verbose=True):
     """Disable screen blanking. Restored automatically at exit."""
     global _SAVED
@@ -57,6 +90,7 @@ def hold(verbose=True):
         _xset("dpms", "force", "on")
     except Exception:
         return False
+    _pause_locker()
     atexit.register(release)
     if verbose and _SAVED:
         print("[nosleep] blanking off (was s=%ds dpms=%d/%d/%d); "
@@ -78,3 +112,4 @@ def release():
             _xset("dpms", str(standby), str(suspend), str(off))
     except Exception:
         pass
+    _resume_locker()

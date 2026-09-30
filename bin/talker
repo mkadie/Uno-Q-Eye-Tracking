@@ -384,6 +384,10 @@ def main():
                     help="save frames here. SIGUSR1 saves one immediately, "
                          "so a capture can be triggered over ssh by someone "
                          "with no keyboard on the board.")
+    ap.add_argument("--record-cam", action="store_true",
+                    help="with --record, also save the CAMERA frame at the "
+                         "same instant, so the face and the screen it was "
+                         "looking at are a matched pair")
     ap.add_argument("--record-every", type=float, default=0.0, metavar="SEC",
                     help="also save a frame every SEC seconds (0 = only on "
                          "SIGUSR1)")
@@ -529,9 +533,11 @@ def main():
         t_prev = now
 
         gx = gy = None
+        last_frame = None
         if not use_mouse and cam is not None:
             frame = cam.read()
             if frame is not None:
+                last_frame = frame
                 size = cfg["inference"]["input_size"]
                 fh, fw = frame.shape[:2]
                 s = float(size) / max(fh, fw)
@@ -609,7 +615,28 @@ def main():
                 shot_n += 1
                 fn = os.path.join(args.record, "talker_%03d.png" % shot_n)
                 cv2.imwrite(fn, canvas)
-                print("saved %s  (%s, hover=%s)" % (fn, src, hover))
+                if args.record_cam and last_frame is not None:
+                    # Same instant, same index: the pair shows the face and
+                    # the screen that face was looking at. Saved RAW -- any
+                    # de-identifying happens later, deliberately, rather than
+                    # being half-done here where it would be easy to assume
+                    # it had been handled.
+                    cv2.imwrite(os.path.join(args.record,
+                                             "cam_%03d.png" % shot_n),
+                                last_frame)
+                # Log the STATE beside the filename, not just the name. A
+                # capture run makes dozens of frames and the one worth
+                # keeping is picked by what the board was doing -- mid-dwell
+                # with the bar part-filled, or a steady hold -- which no
+                # amount of staring at thumbnails recovers afterwards.
+                sx = sy = 0.0
+                if trail and len(trail) > 4:
+                    xs = [p[0] for p in trail]
+                    ys = [p[1] for p in trail]
+                    sx, sy = max(xs) - min(xs), max(ys) - min(ys)
+                print("saved %s  src=%s hover=%s dwell=%.2f spread=%.0fx%.0fpx"
+                      % (os.path.basename(fn), src, hover, frac, sx, sy),
+                      flush=True)
 
         cv2.imshow(WIN, canvas)
         k = cv2.waitKey(1) & 0xFF

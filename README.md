@@ -9,6 +9,33 @@ tight, and to produce the numbers that decide the design. Guessing at fps and
 accuracy and then discovering the truth in week five is how projects miss
 deadlines.
 
+## What it looks like
+
+![Gaze trail on the AAC board](docs/talker_gaze_trail.png)
+
+The T-Rex Talker board under eye control, captured on the UNO Q itself. The
+cyan-to-white dots are the **last 90 gaze samples**, oldest dimmest — the
+gaze arriving from the cell below, settling on *No*, and wandering around it
+while it holds. The white ring is the current estimate; the blue outline is
+the cell the board has committed to.
+
+**The wander is the point.** Gaze does not sit on a target, it circles one,
+and a selection has to survive that. A cell here is 640 × 540 px against a
+measured p95 of about 164 px, which is why a 3 × 2 board works and a denser
+one does not.
+
+![A steady hold](docs/talker_gaze_hold.png)
+
+A steadier moment: the same board with the samples clustered inside one cell.
+
+![Subject under the red lamp](docs/subject_with_red_lamp.png)
+
+The camera's own view at that instant — 16 red LEDs at ~625 nm, which pass a
+consumer webcam's IR-cut filter freely where a pure-IR lamp would not. The
+lamp is worth **3.2× steadier gaze** (95% CI [+105, +243] px, excluding
+zero). The background is destroyed deliberately; see **Data, images and
+privacy**.
+
 ## Results, measured
 
 Tested on the public at Maker Faire Bay Area, 25–26 September 2026 —
