@@ -79,7 +79,7 @@ ITEMS = [
     ("T-Rex Talker  —  head", "turn your head to point, hold to speak",
      ["python3", os.path.join(HERE, "talker"),
       "--menu", TALKER_MENU, "--sounds", TALKER_SOUNDS,
-      "--mode", "head", "--dwell", "1.2"]),
+      "--mode", "head", "--tag-id", "2", "--dwell", "1.2"]),
 ]
 
 WIN = "menu"

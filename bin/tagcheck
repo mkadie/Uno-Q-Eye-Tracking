@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Is the glasses tag visible, how big, and how fast? Run this before calibrating.
+
+Head mode has one failure that looks like every other failure: the tag is not
+being found. Calibration will just report "unstable" five times and leave you
+guessing whether it is the lighting, the distance, the tag id, or the code.
+This answers that in twenty seconds, with the numbers that decide it:
+
+  detection rate   -- below ~90% at rest, nothing downstream is worth running
+  side px          -- the spec expects ~6-7 px per cell at 600 mm, so a
+                      DICT_4X4_50 tag (4 data cells + 2 border = 6 cells)
+                      should measure roughly 36-42 px on a side. Much less
+                      and the corners are mush; much more and you are closer
+                      than the working distance.
+  fps              -- acceptance is >= 25
+  ROI hit rate     -- how often the cheap crop found it. Low means the ROI is
+                      being thrown away every frame and you are paying full
+                      frame cost, which is what eats the fps budget.
+
+Usage:  bin/tagcheck [--seconds 20] [--tag-id 0]
+"""
+import argparse
+import os
+import sys
+import time
+
+import cv2
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from spike import camera, config, tagtrack
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--seconds", type=float, default=20.0)
+    ap.add_argument("--tag-id", type=int, default=tagtrack.DEFAULT_TAG_ID)
+    ap.add_argument("--config", default="config.toml")
+    args = ap.parse_args()
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = config.load(os.path.join(root, args.config))
+    c = cfg["camera"]
+    cam = camera.Camera(c["device"], c["width"], c["height"], c["fps"],
+                        c["fourcc"], c["exposure"], c["focus"], c["gain"]).open()
+    tr = tagtrack.TagTracker(args.tag_id)
+
+    print("looking for DICT_4X4_50 id %d at %dx%d for %.0f s -- "
+          "wear the glasses and face the camera"
+          % (args.tag_id, c["width"], c["height"], args.seconds))
+
+    t0 = time.perf_counter()
+    frames = hits = 0
+    sides, xs, ys = [], [], []
+    while time.perf_counter() - t0 < args.seconds:
+        frame = cam.read()
+        if frame is None:
+            continue
+        frames += 1
+        hit = tr.find(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+        if hit is not None:
+            hits += 1
+            sides.append(hit[1])
+            xs.append(hit[0][0])
+            ys.append(hit[0][1])
+    el = time.perf_counter() - t0
+    cam.close()
+
+    if not frames:
+        print("no frames from the camera at all")
+        return 2
+    rate = 100.0 * hits / frames
+    print("\nframes %d in %.1f s  ->  %.1f fps" % (frames, el, frames / el))
+    print("tag found on %d (%.0f%%)" % (hits, rate))
+    if hits:
+        s = np.asarray(sides)
+        print("side %.1f px (p5 %.1f, p95 %.1f)  -> ~%.1f px per cell"
+              % (np.median(s), np.percentile(s, 5), np.percentile(s, 95),
+                 np.median(s) / 6.0))
+        print("centre wandered %.1f x %.1f px while you held still"
+              % (np.ptp(xs), np.ptp(ys)))
+        print("ROI found it %d times, full frame %d"
+              % (tr.roi_frames, tr.full_frames))
+
+    ok = True
+    # fps is REPORTED, not gated. MEASURED 2026-09-30: the camera alone
+    # delivers 19.0 fps at 1280x720 on this board and tag detection costs
+    # 0.9 of that -- the shortfall against the spec's 25 is the camera and
+    # the MJPEG decode, not the tracker. Gating on it would fail a rig that
+    # is working perfectly, every time.
+    if frames / el < 25:
+        print("\nfps %.1f is under the spec's 25. The camera alone manages "
+              "~19 here, so this is the sensor, not the tracker. 960x540 is "
+              "NOT the fix: +2 fps, -33%% detection." % (frames / el))
+    if rate < 90:
+        print("\nDETECTION BELOW 90%% (%.0f%%). Check: tag id, that the tag is "
+              "flat and unglared, and the working distance (500-650 mm)." % rate)
+        ok = False
+    if hits and np.median(sides) < tagtrack.MIN_USABLE_SIDE_PX:
+        print("\nTAG IS SMALL (%.0f px side). Corners will be mush; move "
+              "closer or print larger." % np.median(sides))
+        ok = False
+    print("\n%s" % ("READY to calibrate." if ok else "NOT ready -- fix the above first."))
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

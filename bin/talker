@@ -442,8 +442,10 @@ def main():
                          "head = ArUco tag on the glasses; no inference at "
                          "all, so it survives the head turns that end eye "
                          "tracking at ~20 deg.")
-    ap.add_argument("--tag-id", type=int, default=0,
-                    help="ArUco DICT_4X4_50 id on the glasses (head mode)")
+    ap.add_argument("--tag-id", type=int, default=tagtrack.DEFAULT_TAG_ID,
+                    help="ArUco DICT_4X4_50 id on the glasses (head mode). "
+                         "This rig's printed tag is id 2, not the 0 the spec "
+                         "names -- a wrong id looks exactly like bad lighting.")
     ap.add_argument("--headcal", default=tagtrack.DEFAULT_CAL,
                     help="head calibration file, kept separate from the eye "
                          "model so neither can overwrite the other")

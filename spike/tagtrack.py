@@ -34,9 +34,23 @@ except ImportError:                                   # pragma: no cover
 
 from . import marker_board
 
-# DICT_4X4_50, id 0 by default. 4.5 mm cells -> 27 mm marker on a 33.75 mm
-# tile, which subtends about 6-7 px per cell at 600 mm on the C920x at 1280.
+# DICT_4X4_50. 4.5 mm cells -> 27 mm marker on a 33.75 mm tile.
+#
+# DEFAULT_TAG_ID IS 2, NOT 0. head_track.md specifies id 0 and says ids 0-3
+# were printed, but the tag physically on this rig's glasses is **id 2** --
+# MEASURED 2026-09-30, after a tagcheck run reported 0% detection and sent
+# us looking at lighting and distance. It was neither: the detector was
+# asked for the wrong marker and correctly found nothing. A spec's default
+# loses to the object in the room.
 DICT = 0 if cv2 is None else cv2.aruco.DICT_4X4_50
+DEFAULT_TAG_ID = 2
+
+# MEASURED 2026-09-30 at 1280x720, exposure 156: side 44.4 px (p5 39.3,
+# p95 46.6) = 7.4 px per cell at the working distance, 98-100% detection.
+# DO NOT DROP TO 960x540 to chase frame rate: it buys 2.2 fps (19.0 -> 22.2
+# camera alone) and costs a THIRD of the detections (100% -> 67%), because
+# the tag falls to about 5.5 px per cell and the corners stop resolving.
+MIN_USABLE_SIDE_PX = 24.0
 DEFAULT_CAL = os.path.expanduser("~/.headtrack_cal.json")
 
 # Calibration protocol. Centre FIRST: it is the only point a user with a
@@ -66,7 +80,7 @@ class TagTracker(object):
     cheaper and less alarming than having it jump.
     """
 
-    def __init__(self, tag_id=0, roi_scale=2.5, miss_budget=3):
+    def __init__(self, tag_id=DEFAULT_TAG_ID, roi_scale=2.5, miss_budget=3):
         self._detect = marker_board.make_detector(DICT)
         self.tag_id = int(tag_id)
         self.roi_scale = float(roi_scale)
