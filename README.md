@@ -24,6 +24,18 @@ and a selection has to survive that. A cell here is 640 × 540 px against a
 measured p95 of about 164 px, which is why a 3 × 2 board works and a denser
 one does not.
 
+![Selecting by dwell](docs/talker_dwell_selecting.png)
+
+**Selecting with the eyes alone.** The green bar along the bottom of *Food /
+Drink* is a dwell part-way through — hold the gaze on a cell for 1.2 s and it
+speaks, no click, no key. That matters more than it looks: the person this is
+built for has neither hand nor keyboard, and without dwell they could
+highlight a word forever and never say it.
+
+The 1.2 s is set against a 3-sample hysteresis. Long enough that reading a
+cell does not fire it — the Midas touch problem, where everything you look at
+activates — and short enough that a sentence is not a chore.
+
 ![A steady hold](docs/talker_gaze_hold.png)
 
 A steadier moment: the same board with the samples clustered inside one cell.
