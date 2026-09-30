@@ -122,6 +122,12 @@ class LinearMapper(object):
 
     COLS = (0, 1, 2, 3, 4, 5)      # l/r iris x,y, then yaw, pitch
 
+    # Feature columns 10 and 11, when present, are the ArUco tag's normalised
+    # image position -- appended by targets.collect_point when it is handed a
+    # tracker. features.extract() still returns its own 10 columns untouched,
+    # so nothing that does not ask for the tag can be affected by it.
+    TAG_X, TAG_Y = 10, 11
+
     def __init__(self, ridge=0.1):
         # MEASURED on real 9-point data with STANDARDISED columns:
         #   0.01 -> predicted span 1507 px against a 1459 px target
@@ -172,6 +178,36 @@ class LinearMapper(object):
             raise RuntimeError("LinearMapper.predict() before fit()")
         out = self._design(x) @ self._W
         return out[0] if np.ndim(x) == 1 else out
+
+
+class TagAssistedMapper(LinearMapper):
+    """Gaze from the iris plus the TAG's position, instead of face-mesh pose.
+
+    THE HYPOTHESIS THIS TESTS. Gaze error here is bias/drift-dominated rather
+    than jitter (scatter/error 0.22), it grows when a visitor moves away from
+    where they calibrated (5.30 -> 8.93 deg), and it collapses past 20 degrees
+    of head turn (71% -> 5% valid). A session where a father held his
+    daughter's head still scored 2.11 deg -- better than any run the developer
+    recorded on the same camera and fit. That is not an iris-resolution
+    problem. It is the head.
+
+    The gaze model already carries a head signal: `yaw` and `pitch` from the
+    face mesh. But the face mesh's pose estimate is derived from the same
+    landmarks that are failing when the head turns, so it degrades exactly
+    when it is needed. The ArUco tag does not: 100% detection, 0 losses in
+    359 frames of use, and no inference at all.
+
+    SO THIS IS A SWAP, NOT AN ADDITION -- columns 4 and 5 give way to 10 and
+    11. Same six features, same seven parameters, same ridge. If the swap
+    wins, it is because the tag is a better head signal, and NOT because the
+    model was handed more capacity to fit with. An extra pair of columns
+    would have confounded exactly the thing being measured.
+
+    UNMEASURED at the time of writing. If it works it is most of what a
+    second camera would buy, on hardware already on the desk.
+    """
+
+    COLS = (0, 1, 2, 3, LinearMapper.TAG_X, LinearMapper.TAG_Y)
 
 
 class GazeMapper:

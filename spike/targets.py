@@ -85,8 +85,15 @@ def draw_target(canvas, pt, phase, label=""):
                 0.6, (110, 110, 120), 1, cv2.LINE_AA)
 
 
-def collect_point(cam, be, cfg, canvas, pt, label):
-    """Show one target, settle, then average feature vectors over N samples."""
+def collect_point(cam, be, cfg, canvas, pt, label, tracker=None):
+    """Show one target, settle, then average feature vectors over N samples.
+
+    `tracker` (optional) is a tagtrack.TagTracker. When given, each accepted
+    sample carries the ArUco tag's image position appended as two extra
+    columns, and a frame where the tag is not found is REJECTED outright
+    rather than averaged in with a gap. A calibration point half of whose
+    samples lack the head signal is worse than one that retried.
+    """
     settle = cfg["calibration"]["settle_ms"] / 1000.0
     n = cfg["calibration"]["samples_per_point"]
     size = cfg["inference"]["input_size"]
@@ -126,6 +133,14 @@ def collect_point(cam, be, cfg, canvas, pt, label):
         # calibration average poisons that whole grid point.
         if features.is_blinking(diag, blink_thr):
             continue
+        if tracker is not None:
+            hit = tracker.find(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+            if hit is None:
+                continue
+            # Normalised by frame size so a calibration survives a
+            # resolution change, exactly like every other feature here.
+            feat = np.concatenate([feat, [hit[0][0] / float(w),
+                                          hit[0][1] / float(h)]])
         if el >= settle:
             feats.append(feat)
             if len(feats) >= n:
