@@ -87,6 +87,28 @@ def test_calibration_protocol_constants_match_the_spec():
     assert tagtrack.MIN_SAMPLES == 8
     assert tagtrack.MAX_JITTER_PX == 3.0
     assert tagtrack.MIN_POINTS == 4
+    # Collection is sample-driven so the protocol is the same at 17 fps as
+    # at 30, and capped so an occluded tag cannot hang it.
+    assert tagtrack.TARGET_SAMPLES >= 2 * tagtrack.MIN_SAMPLES
+    assert tagtrack.COLLECT_MAX_S > 0
+
+
+def test_one_twitch_does_not_fail_an_otherwise_still_point():
+    """The measured failure mode: 5 of 5 points failed their first attempt
+    at 8 samples. A std squares a lone outlier and lets it decide."""
+    still = [(100.0, 200.0)] * 17 + [(140.0, 240.0)]     # 17 still, one twitch
+    assert tagtrack.jitter_px(still) <= tagtrack.MAX_JITTER_PX
+    assert np.asarray(still).std(axis=0).max() > tagtrack.MAX_JITTER_PX
+
+
+def test_real_movement_still_fails():
+    """Forgiving a twitch must not mean accepting a head that is moving."""
+    drifting = [(100.0 + 3.0 * i, 200.0 + 2.0 * i) for i in range(18)]
+    assert tagtrack.jitter_px(drifting) > tagtrack.MAX_JITTER_PX
+
+
+def test_jitter_of_a_perfectly_still_tag_is_zero():
+    assert tagtrack.jitter_px([(50.0, 60.0)] * 12) == 0.0
 
 
 def test_unfitted_mapper_reports_itself():

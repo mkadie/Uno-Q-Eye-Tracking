@@ -369,7 +369,11 @@ def calibrate_head(cam, canvas, tracker, cal_path, W, H, tag_id):
             samples = []
             while True:
                 el = time.perf_counter() - t0
-                if el >= tagtrack.SETTLE_S + tagtrack.COLLECT_S:
+                # Stop on SAMPLES, not on the clock -- with a cap so an
+                # occluded tag cannot hang the calibration forever.
+                if len(samples) >= tagtrack.TARGET_SAMPLES:
+                    break
+                if el >= tagtrack.SETTLE_S + tagtrack.COLLECT_MAX_S:
                     break
                 phase = min(1.0, el / tagtrack.SETTLE_S)
                 draw_target(canvas, pt, phase,
@@ -385,11 +389,12 @@ def calibrate_head(cam, canvas, tracker, cal_path, W, H, tag_id):
                 if hit is not None and el >= tagtrack.SETTLE_S:
                     samples.append(hit[0])
             pts = np.asarray(samples)
-            if (len(pts) >= tagtrack.MIN_SAMPLES
-                    and float(pts.std(axis=0).max()) <= tagtrack.MAX_JITTER_PX):
+            jit = tagtrack.jitter_px(pts) if len(pts) else float("inf")
+            if len(pts) >= tagtrack.MIN_SAMPLES and jit <= tagtrack.MAX_JITTER_PX:
                 got = np.median(pts, axis=0)
                 break
-            print("  point %d unstable (%d samples) -- retry" % (i + 1, len(pts)))
+            print("  point %d unstable (%d samples, jitter %.1f px > %.1f) "
+                  "-- retry" % (i + 1, len(pts), jit, tagtrack.MAX_JITTER_PX))
         if got is not None:
             feats.append(got)
             tgts.append((fx, fy))

@@ -58,11 +58,35 @@ DEFAULT_CAL = os.path.expanduser("~/.headtrack_cal.json")
 # else still tells you the tag was found and roughly where.
 CAL_POINTS = [(0.5, 0.5), (0.15, 0.15), (0.85, 0.15), (0.85, 0.85), (0.15, 0.85)]
 SETTLE_S = 0.5
-COLLECT_S = 0.7
+
+# COLLECT BY SAMPLE COUNT, NOT BY CLOCK. head_track.md asks for a 0.7 s
+# window, which assumes 30 fps and yields ~21 samples. This board delivers
+# 17, so 0.7 s yielded exactly 8 -- MIN_SAMPLES, the bare floor -- and
+# MEASURED 2026-09-30 every one of the five points failed its first attempt
+# with `unstable (8 samples)`. A median of 8 is a thin estimate and a single
+# twitch dominates the spread. Counting samples makes the protocol behave the
+# same whatever frame rate the board happens to manage.
+TARGET_SAMPLES = 18
+COLLECT_MAX_S = 2.5     # cap, so an occluded tag cannot hang a calibration
 MIN_SAMPLES = 8
 MAX_JITTER_PX = 3.0
 RETRIES = 2
 MIN_POINTS = 4          # 3 determine an affine fit; 4 leaves one to argue with
+
+
+def jitter_px(samples):
+    """Robust per-axis spread, in pixels, of a held tag.
+
+    MAD scaled to be comparable with a standard deviation (x1.4826 for
+    Gaussian data), rather than the standard deviation itself. The failure
+    being fixed is a SINGLE twitch failing an otherwise still point: std
+    squares that outlier and lets it decide, where MAD does not. It is no
+    more forgiving of genuine movement -- a head that is actually drifting
+    moves the median too.
+    """
+    a = np.asarray(samples, dtype=np.float64)
+    med = np.median(a, axis=0)
+    return float(np.max(np.median(np.abs(a - med), axis=0)) * 1.4826)
 
 
 class TagTracker(object):
