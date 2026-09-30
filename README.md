@@ -298,18 +298,20 @@ unmodified frames.
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE.md) — free for any noncommercial
-purpose, including personal projects, research, education, and use by
-charities, schools and public institutions. Commercial use requires a
-separate license.
+[MIT](LICENSE). Use it for anything, including commercially; keep the
+copyright notice.
 
-**This is a source-available license, not an OSI-approved open source one.**
-The Open Source Definition requires that a license not restrict any field of
-endeavour, so any "noncommercial" clause falls outside it. If you need
-OSI-approved terms, ask.
+Third-party material shipped alongside keeps its own terms and is **not**
+relicensed by this:
 
-Third-party components keep their own licenses — see the end of
-[`LICENSE.md`](LICENSE.md).
+- `models/face_landmarker.task` and `models/bundle/*.tflite` — MediaPipe face
+  landmarker, © Google, Apache License 2.0.
+- Runtime dependencies (OpenCV, NumPy, `ai-edge-litert`, MediaPipe) are each
+  under their own licenses.
+
+The Maker Faire session data in `study_data/` is released under the same
+terms; see **Data, images and privacy** above for what it does and does not
+contain.
 
 ## Who this is for
 
