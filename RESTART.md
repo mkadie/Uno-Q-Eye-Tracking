@@ -1,6 +1,6 @@
 # RESTART — read this first after a crash or power loss
 
-Last updated: **2026-09-29** — the faire is DONE and its data is off the board.
+Last updated: **2026-09-29** — faire data analysed, code is PUBLIC on GitHub.
 
 > **THE FAIRE RAN Fri 25 + Sat 26 Sep: 125 visitors, 2413 throws, p50 6.26
 > deg — and SUNDAY CAPTURED NOTHING.** 87% of visitors got a median error of
@@ -27,6 +27,18 @@ Last updated: **2026-09-29** — the faire is DONE and its data is off the board
 > last boot; it reverts to `schedutil` on EVERY reboot, so any timing taken
 > across one of these crashes is void.
 
+> **THE CODE IS PUBLISHED: <https://github.com/mkadie/Uno-Q-Eye-Tracking>**,
+> public, MIT. Push with `git push origin master` as normal. Two things about
+> it that are NOT recoverable if forgotten:
+> **(1)** `board_artifacts` was purged from all 55 commits with
+> `git filter-repo` because the frames were shot in a home and several showed
+> the subject shirtless. The originals live ONLY at
+> `~/unoq-artifacts-ORIGINAL-do-not-publish/` — they are in no git history
+> anywhere. **(2)** Everything published went through
+> `tools/deidentify.py` (face kept, rest pixelated at 1/44 then blurred).
+> **Anything new added to `board_artifacts/` or `docs/` must go through it
+> too, with `--raw` for frames that carry no drawn annotations.**
+
 ## The 60-second version
 
 The **glasses-rim fiducial now measures distance on real hardware** and does
@@ -46,7 +58,8 @@ numbers; this is the orientation.
 | Gate 1c bare-faced | **DONE — 3.27 deg / 5.56 p95 -> PATH B.** Repeat in good light. |
 | red lamp | **WORKS — 3.2x steadier, CI excludes zero, reproduced in the game. USE IT.** |
 | fixation protocol | **REBUILT** — the old one measured the subject's drift, not the tracker |
-| faire kiosk | **RUNS on hardware** — auto-login confirmed, menu up, all three rows launch |
+| faire kiosk | **RUNS on hardware** — auto-login confirmed, all three rows launch |
+| gaze talker | **selects by DWELL since 2026-09-30.** Before that it needed a key it could not receive |
 | kiosk with NO KEYBOARD | **fixed 2026-09-24** — every app can now be left by mouse alone. Untested by hand. |
 | calibration FIT | **two bugs found and fixed** — see below. This is where the gain came from, not the glasses. |
 | the model | **linear (7 par) beats degree-2 (66 par) at every point count tried** |
@@ -54,6 +67,8 @@ numbers; this is the orientation.
 | `DIGEST.md` | portable ~8 KB summary for claude.ai / a fresh chat. **Re-upload when findings land.** |
 
 Suite is **195 passing** here, 194 + 1 skip on the board. No hardware needed.
+
+**What the faire measured, in one line:** 6.26 deg p50 over 125 visitors, 87% of them at 10 deg or better, **10% who got nothing** — and the thing that separated that 10% was HEAD TURN, a cliff at 20 deg, not distance. `RESULTS.md` has it in full.
 
 ## What changed this session, and what it means
 
@@ -446,6 +461,68 @@ processes alive **28 minutes later**, holding the display next to the
 kiosk. `timeout` killed the wrapper, not the child. If that shape is in a
 script it will recur at the faire.
 
+## 2026-09-30: the gaze talker could not be used by gaze
+
+Three faults, all found while capturing screenshots, all of the same family
+as the Back button and the missing exits: **invisible to anyone testing with
+a keyboard and a mouse in reach.**
+
+**`--dwell` defaults to 0.0, and the kiosk was not passing it.** Selection
+therefore needed SPACE, ENTER or a click. A visitor with neither hand nor
+keyboard — the actual AAC case, the entire point of the project — could
+highlight a word and never speak it. `bin/menu` now launches the eyes row
+with `--dwell 1.2`; the mouse row stays click-only on purpose, because a
+pointer rests where it was left and would speak whatever it is parked on.
+**FIXED but NOT yet run from the menu by hand** — launching the eyes row
+once confirms the path end to end.
+
+I also misdiagnosed this first. Every captured frame logged `dwell=0.00`
+and I said the 2 s capture interval was skipping past the dwell window. It
+was not: there was no dwell to catch. **The log was right and the
+explanation was wrong** — check what a default actually is before blaming
+sampling.
+
+**`light-locker` put a lock screen over the running talker.** `nosleep.py`
+was only doing `xset s off` and `-dpms`, which that locker ignores — it runs
+its own timer. On a kiosk with no keyboard this is unrecoverable: nobody can
+type a password to get back, so the exhibit simply ends showing a login
+prompt. **This is a live candidate for why Sunday captured nothing**,
+alongside the boot failures. `nosleep.hold()` now SIGSTOPs light-locker,
+xscreensaver, gnome-screensaver, mate-screensaver and xfce4-screensaver and
+SIGCONTs them at exit — stopped rather than killed, so a desktop's locker is
+not permanently disarmed.
+
+**The de-identifier leaked on raw camera frames.** The pure-colour test that
+rescues drawn annotations from the wipe also rescued a bright blue lamp glow
+in the background: a saturated highlight is indistinguishable from a
+saturated stroke. That rule only holds on frames that HAVE annotations, so
+`tools/deidentify.py --raw` turns it off. **Use `--raw` on every plain
+camera frame.**
+
+## Capturing screenshots without HDMI capture
+
+`bin/talker --record DIR` writes the canvas straight from the render loop —
+no screen-grab tool needed, and the board has none installed. Add
+`--record-cam` for the matching camera frame at the same instant, and
+`--record-every SEC` for unattended runs. **SIGUSR1 saves a frame
+immediately**, which is how a capture gets triggered on a board with no
+keyboard: `kill -USR1 $(pgrep -f "bin/talk[e]r")` over ssh.
+
+`--trail N` draws the last N gaze samples as fading dots. That is the thing
+a still frame otherwise cannot show: the gaze does not sit on a target, it
+circles one.
+
+Each saved frame logs its own state — `dwell=`, `hover=`, `spread=` — so the
+frame worth keeping is picked from the log rather than by opening hundreds
+of images. **`spread` is also the fastest calibration check there is:** a
+few hundred px means it took, ~1900x1079 means it calibrated to an empty
+chair.
+
+Published shots live in `docs/`. The capture run that produced them also
+reproduced the head-turn cliff live: trail spread went 136x483 px while the
+subject faced the screen, then 1919x1079 once the head turned — the same
+71% -> 5% collapse the faire data shows, in one sitting.
+
 ## The lamp WORKS — measured 2026-09-23, two instruments agree
 
 It is **16 red LEDs plus one 850 nm IR LED** — a red illuminator, so the
@@ -551,7 +628,10 @@ Try both; they are different images and the landmark model may prefer either.
 
 ## Still open, roughly in priority order
 
-0. **Test the four kiosk exits by hand** — 5 minutes, and nothing else on
+0. **Launch the eyes row from `bin/menu` once.** The `--dwell` fix is on the
+   board but has only been run by launching `bin/talker` directly. One
+   minute, and it is the path a visitor takes.
+0b. **Test the four kiosk exits by hand** — 5 minutes, and nothing else on
    this list matters if a visitor can strand the booth. Talker: Back cell in
    Food & Drink, right-click home from a submenu, the `exit` chip (two
    clicks). Game: the `X`, bottom right (two clicks). All four were written
