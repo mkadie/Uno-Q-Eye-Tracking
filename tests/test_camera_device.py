@@ -83,3 +83,17 @@ def test_error_names_both_paths_when_resolution_moved_it(tmp_path):
     msg = str(e.value)
     assert str(link) in msg                        # requested
     assert os.path.realpath(str(target)) in msg    # resolved
+
+
+def test_two_v4l2_buffers_not_one():
+    """One buffer halves the frame rate and saves no latency.
+
+    MEASURED 2026-10-03: 19.0 fps with one buffer against 29.9 with two,
+    because the driver has nowhere to put the next frame while we decode and
+    drops it -- a 63.5 ms wait against a 33.3 ms frame interval. 0% of reads
+    returned instantly at ANY buffer count, so nothing stale is being queued;
+    the grabber drains continuously. This is a number someone will be tempted
+    to "fix" back to 1 for latency, so the reason lives here too.
+    """
+    from spike import camera
+    assert camera.V4L2_BUFFERS >= 2

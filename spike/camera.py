@@ -56,6 +56,27 @@ CTRL_ALIASES = {
 MANUAL_EXPOSURE = 1  # 3 = aperture priority (auto), 1 = manual. Both eras.
 
 
+# TWO buffers, not one. MEASURED 2026-10-03 and worth 57% of the frame rate:
+#
+#     buffers   delivered fps   read wait   reads that returned instantly
+#        1          19.0         63.5 ms              0%
+#        2          29.9         32.8 ms              0%
+#        3          30.0         32.7 ms              0%
+#
+# One buffer was chosen for "latency, not throughput" and did neither. While
+# we decode frame N the driver has nowhere to put frame N+1, so it drops it
+# and the next grab waits for N+2 -- a 63.5 ms wait against a 33.3 ms frame
+# interval, exactly two intervals, and half the camera's rate thrown away.
+#
+# It costs NO latency, and that is measured rather than assumed: at every
+# buffer count **0%** of reads returned without waiting, and the median wait
+# is one frame interval. We are never handed a stale queued frame, because
+# the grabber below drains continuously and keeps only the newest -- decode
+# is 15.4 ms against a 33.3 ms interval, so it always has the headroom to
+# stay drained. More than 2 buys nothing.
+V4L2_BUFFERS = 2
+
+
 class _Grabber(threading.Thread):
     """Keep the newest frame available so the pipeline never waits on the sensor.
 
@@ -212,7 +233,7 @@ class Camera:
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         self.cap.set(cv2.CAP_PROP_FPS, self.fps)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # latency, not throughput
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, V4L2_BUFFERS)
 
         # Stream must be genuinely running before controls will stick.
         for _ in range(self.warmup_frames):

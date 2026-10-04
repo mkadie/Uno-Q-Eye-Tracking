@@ -300,43 +300,98 @@ used to be written here as though it were a hardware fact. It is a choice.
   and **Vulkan via turnip** (`Turnip Adreno (TM) 702`). OpenCV is even built
   with OpenCL and reports `useOpenCL: True`.
 
-**BUT DO NOT GO AND PUT THE NEURAL NET ON IT.** MEASURED 2026-10-03, on the
-`performance` governor:
+**THE GPU IS A DEAD END TODAY, AND NOT FOR THE REASON I FIRST GAVE.**
+MEASURED 2026-10-03, `performance` governor.
 
-| stage | per frame |
-|---|---|
-| USB grab, no decode | **37.8 ms** (26.4 fps) |
-| **MJPEG decode** | **28.9 ms** |
-| face-mesh inference | **10.7 ms** (93.6 fps alone) |
+First I measured inference at 10.7 ms and told the user the net was the
+cheapest stage and not worth moving. **That was wrong, and wrong in this
+project's classic way: I benchmarked on RANDOM NOISE.** No face is found in
+noise, so the landmark model never runs and only the detector is timed. With
+a real face in frame:
 
-**Inference is the cheapest part of the pipeline.** Decode costs 3x what it
-does. Moving the net to the GPU is optimising the 10.7 ms and leaving the
-28.9 alone.
+| stage | per frame | note |
+|---|---|---|
+| **478-point landmark model** | **46.6 ms** | **97% of the pipeline** |
+| face detector | 14.4 ms | runs on 3 frames in 80 -- ROI tracking works |
+| crop / warp / numpy | 0.7 ms | negligible |
+| cvtColor 1280x720 | 1.2 ms | negligible |
+| MJPEG decode (grabber thread) | 15.4 ms | parallel, off the critical path |
 
-**The frame rate is QUANTISED, and that is the whole story.** `read()`
-measures **66.7 ms** -- exactly 2 x the camera's 33.3 ms frame interval.
-Decode (28.9) plus inference (10.7) is 39.6 ms, about **6 ms over budget**,
-so every frame misses its slot and waits for the next one. Throughput halves
-to 15 fps. **Get total per-frame work under 33 ms and the rate roughly
-doubles**; shaving 6 ms is worth more than any amount of GPU work.
+`detect()` wall time is **47.9 ms -> a 20.9 fps ceiling**, and the measured
+full eye pipeline is 21.1 fps. **The landmark model IS the bottleneck.** Any
+claim that it is not should be re-measured on a frame with a face in it.
+
+**So the GPU is the obvious lever -- and it loses.** Benchmarked through
+OpenCV's OpenCL path on the Adreno 702 (`FD702`, 1 compute unit, 844 MHz):
+
+| SGEMM | CPU | GPU via rusticl | |
+|---|---|---|---|
+| N=512 | 6.8 GFLOPS | 3.5 GFLOPS | **0.52x** |
+| N=1024 | 9.9 GFLOPS | 5.3 GFLOPS | **0.54x** |
+
+**The GPU is roughly HALF the CPU for general compute**, so moving the
+landmark model onto it with today's stack would make the tracker slower.
+The Adreno 702's theoretical fp32 is of order 200 GFLOPS and we are getting
+5, so this is almost certainly **Mesa's rusticl being untuned on freedreno
+rather than the silicon being this slow** -- but untuned is what is
+installed, and a benchmark beats a datasheet.
+
+**What would still be worth trying, in order, and none of it is free:**
+
+1. **Vulkan compute via turnip instead of OpenCL via rusticl.** Turnip is
+   the more mature freedreno driver. A runtime with a Vulkan backend --
+   ncnn or MNN -- would bypass rusticl entirely. This is the only GPU path
+   with a real chance.
+2. **A built TFLite GPU delegate.** `ai-edge-litert` 2.1.6 ships **no
+   delegate .so** at all, so this means building
+   `libtensorflowlite_gpu_delegate.so` for aarch64. Its OpenCL path lands
+   back on rusticl, so expect the numbers above.
+3. **int8 quantisation of the landmark model.** It is fp16 weights with
+   fp32 compute today; XNNPACK int8 is commonly ~2x. Needs a representative
+   dataset and costs accuracy that would have to be re-measured against
+   Gate 1c.
+4. **Run the landmark model every other frame** and interpolate. Exactly 2x
+   the rate for exactly 2x the latency. Cheap to try, and the honest first
+   experiment.
 
 **Venus cannot help.** `/dev/video3` is a real hardware video decoder but it
-accepts **H264, VP9, HEVC only** -- not MJPEG. And the C920 on this kernel
+accepts **H264, VP9, HEVC only** -- not MJPEG. The C920 on this kernel
 offers only YUYV and MJPG, so there is no H.264 stream to hand it.
 
 **YUYV is a real alternative at 640x480 and a trap at 720p.** MEASURED:
 
 | format | grab | read | decode/convert |
 |---|---|---|---|
-| MJPG 1280x720 | 37.8 ms | 66.7 ms (15.0 fps) | 28.9 ms |
+| MJPG 1280x720 | 37.8 ms | 66.7 ms (15.0 fps) | 28.9 ms* |
 | YUYV 1280x720 | 100.1 ms | 100.3 ms (**10.0 fps**) | 0.3 ms |
-| MJPG 640x480 | 38.8 ms | 66.9 ms (14.9 fps) | 28.1 ms |
+| MJPG 640x480 | 38.8 ms | 66.9 ms (14.9 fps) | 28.1 ms* |
 | YUYV 640x480 | 46.8 ms | 47.6 ms (**21.0 fps**) | 0.8 ms |
 
-720p YUYV advertises 30 fps in its descriptor and delivers **10** -- USB 2.0
-cannot carry 55 MB/s, so believe the measurement and not the descriptor. At
-640x480 YUYV beats MJPEG outright, 21.0 fps against 14.9, and hands back
-27 ms of CPU.
+\* those decode figures are inflated by the one-buffer stall below; real
+MJPEG decode of a 156 KB camera frame is **15.4 ms**. 720p YUYV advertises
+30 fps in its descriptor and delivers **10** -- USB 2.0 cannot carry
+55 MB/s, so believe the measurement and not the descriptor.
+
+**THE ONE REAL WIN TODAY WAS A SINGLE NUMBER: `CAP_PROP_BUFFERSIZE`.**
+It was 1, "for latency". MEASURED:
+
+| buffers | delivered fps | read wait | reads returning instantly |
+|---|---|---|---|
+| 1 | 19.0 | 63.5 ms | 0% |
+| **2** | **29.9** | **32.8 ms** | **0%** |
+| 3 | 30.0 | 32.7 ms | 0% |
+
+With one buffer the driver has nowhere to put frame N+1 while we decode N,
+drops it, and the next grab waits for N+2 -- 63.5 ms against a 33.3 ms
+interval, exactly two, and **half the camera's rate thrown away for nothing**.
+It cost no latency either, and that is measured: 0% of reads returned
+without waiting at ANY buffer count, so no stale frame is ever queued.
+`spike/camera.V4L2_BUFFERS = 2`.
+
+**This helps the CAMERA-BOUND paths, not the eye pipeline.** Head pointing
+and anything without the landmark model should go from ~17 to near 29 fps.
+The eye pipeline stays at ~21 because it is landmark-bound, and no amount of
+camera work changes that.
 
 **The GPU governor was never pinned.** `/sys/class/devfreq/5900000.gpu` runs
 `simple_ondemand` and idles at **355 MHz of 844**. Only the CPU governor was
