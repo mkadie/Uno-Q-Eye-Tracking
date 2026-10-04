@@ -137,7 +137,11 @@ class LiteRTBackend(Backend):
     name = "litert"
     verified = True      # bin/facecheck, 2026-08-08, 10/10 geometry checks
 
-    def __init__(self, detector_path, landmark_path, num_threads=4):
+    def __init__(self, detector_path, landmark_path, num_threads=4,
+                 detect_input="both"):
+        if detect_input not in ("colour", "gray", "both"):
+            raise ValueError("detect_input must be colour|gray|both, got %r"
+                             % (detect_input,))
         try:
             from ai_edge_litert.interpreter import Interpreter
         except ImportError:
@@ -150,6 +154,39 @@ class LiteRTBackend(Backend):
                               num_threads=num_threads)
         self.lm.allocate_tensors()
         self.anchors = generate_anchors()
+        # WHAT THE DETECTOR IS FED. "colour" | "gray" | "both".
+        #
+        # MEASURED 2026-10-04: under the red lamp -- the lamp that makes the
+        # gaze point 3.2x steadier, so a lamp worth keeping -- the face is
+        # nearly monochromatic in the wrong channel and the detector mostly
+        # finds nothing. Brightening does NOT fix it (x2 and x3.5 both still
+        # failed). Converting to grayscale found a face immediately, on four
+        # out of four stashed red-lamp frames where colour found none.
+        #
+        # But grayscale is NOT free, and the same sweep is why this is not a
+        # plain swap: on two BRIGHT stills, colour found a face and gray did
+        # not. So "gray" is strictly better in one lighting and strictly worse
+        # in another, which is an argument for neither as the default.
+        #
+        # "both" is the resolution: run colour, and only if it finds nothing
+        # retry the same frame in gray. MEASURED over 18 stashed stills --
+        # colour 10, gray 13, BOTH 15 -- and "both" was a strict superset of
+        # colour on every single row, which is the property it was built for.
+        #
+        # THE COST IS NOT FREE AND IT IS NOT SMALL. On a frame where nothing
+        # is found, so the retry always runs, detect() went 24.0 -> 48.7 ms
+        # median (p95 39.1 -> 67.3). A doubling, not the ~11 ms the comment
+        # below would have led you to guess -- that figure was measured
+        # another way and does not transfer. But the cost is paid ONLY on
+        # frames that returned nothing, where there was nothing to be late
+        # for; when colour finds the face the retry never runs and the cost is
+        # exactly zero. The visible effect is that recovery from a lost track
+        # polls at half speed. That is the right place to spend it.
+        #
+        # The LANDMARK model keeps full colour in every mode. It is the stage
+        # that has to localise an iris edge, it was never the stage that
+        # failed, and nothing here measured that starving it is safe.
+        self.detect_input = detect_input
         self._di = self.det.get_input_details()
         self._do = self.det.get_output_details()
         self._li = self.lm.get_input_details()
@@ -173,10 +210,21 @@ class LiteRTBackend(Backend):
         self._prev_px = None      # previous frame landmarks, source pixels
         self._since_det = 10 ** 9
         self._roi_ratio = None    # detector ROI side / landmark bbox side
-        self.stats = {"detector_frames": 0, "tracked_frames": 0}
+        # detector_gray_hits is the figure that says whether the gray retry
+        # is earning its place in the field. If it stays 0 across a session,
+        # the lighting never needed it.
+        self.stats = {"detector_frames": 0, "tracked_frames": 0,
+                      "detector_colour_hits": 0, "detector_gray_hits": 0}
 
-    def _run_detector(self, rgb):
+    def _detect_once(self, rgb, gray):
         img, s, dx, dy = _letterbox(rgb, DET_SIZE)
+        if gray:
+            # AFTER the letterbox, so this costs 128x128 pixels instead of
+            # 1280x720 -- and in "both" mode the letterbox is shared, so the
+            # retry is one more 128x128 invoke and nothing else.
+            import cv2
+            g = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            img = cv2.cvtColor(g, cv2.COLOR_GRAY2RGB)
         inp = (img.astype(np.float32) / 127.5) - 1.0
         self.det.set_tensor(self._di[0]["index"], inp[None])
         self.det.invoke()
@@ -207,6 +255,20 @@ class LiteRTBackend(Backend):
         box = np.array([unpad(boxes[best][:2]), unpad(boxes[best][2:])])
         kp = np.array([unpad(p) for p in kps[best]])
         return box, kp, float(scores[good][best])
+
+    def _run_detector(self, rgb):
+        """Detector per `detect_input`, counting which input actually found it."""
+        if self.detect_input != "gray":
+            hit = self._detect_once(rgb, False)
+            if hit is not None:
+                self.stats["detector_colour_hits"] += 1
+                return hit
+            if self.detect_input == "colour":
+                return None
+        hit = self._detect_once(rgb, True)
+        if hit is not None:
+            self.stats["detector_gray_hits"] += 1
+        return hit
 
     @staticmethod
     def _bbox_side(px):

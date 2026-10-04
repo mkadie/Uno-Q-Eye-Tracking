@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""Does feeding the face DETECTOR grayscale beat feeding it colour? A/B, same frames.
+
+THE PROBLEM. Under the red lamp -- the lamp measured on 2026-09-23 to make the
+gaze point 3.2x steadier, so a lamp we want to keep -- the face region reads
+R 62 / G 18 / B 28. The detector finds a face in a small fraction of frames.
+Brightening does NOT fix it (x2 and x3.5 were measured and both still failed),
+so this is not an exposure problem: the image is nearly monochromatic in the
+WRONG channel, and the detector was trained on faces that are not.
+
+THE CANDIDATE FIX. Convert to grayscale before the detector. Grayscale throws
+the colour cast away instead of trying to correct it, and it needs no
+threshold, no reference white and no tuning -- the same argument that made
+`max_gradient()` the right call for rim detection.
+
+WHAT THIS MEASURES, because a fix that is only plausible is not a fix:
+
+  BENEFIT -- detection rate, colour vs gray, on the SAME frames.
+  COST    -- where both find a face, how far the iris landmarks move.
+
+On the cost: grayscale touches ONLY the detector, whose entire output is a
+crop box. The landmark model still sees full colour in both arms. So the only
+channel by which this can hurt is a slightly different box, and the iris
+displacement below is the size of that. It is reported anyway, because
+"it cannot hurt" is a prediction and this file exists to check predictions.
+
+RUN IT IN BOTH LIGHTS. The red-lamp run says whether the fix works; the
+white-light run says whether it costs anything in the case that already
+worked. A fix that rescues the lamp and breaks ordinary light is not a fix.
+The header line labels each run with the face region's own R/G/B, so no run
+can later be confused for the other condition.
+
+Usage:  bin/graycheck [--seconds 20] [--label "red lamp"]
+"""
+import argparse
+import os
+import sys
+import time
+
+import cv2
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from spike import camera, config, features
+from spike.backends.litert_backend import LiteRTBackend
+from spike.backends import DEFAULT_TASK
+
+L_IRIS, R_IRIS = 468, 473
+
+
+def iris_px(lm, w, h):
+    a = np.asarray(lm, dtype=np.float64)
+    return np.array([a[L_IRIS, 0] * w, a[L_IRIS, 1] * h,
+                     a[R_IRIS, 0] * w, a[R_IRIS, 1] * h])
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--seconds", type=float, default=20.0)
+    ap.add_argument("--label", default="", help="lighting condition, for the log")
+    args = ap.parse_args()
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = config.load(os.path.join(root, "config.toml"))
+    c = cfg["camera"]
+    nt = cfg["inference"].get("num_threads", 4)
+    blink_thr = cfg["inference"]["blink_ear_threshold"]
+
+    base = os.path.dirname(DEFAULT_TASK)
+    det = os.path.join(base, "bundle", "face_detector.tflite")
+    lmk = os.path.join(base, "bundle", "face_landmarks_detector.tflite")
+    # Two independent backends so each keeps its OWN ROI-tracking state. That
+    # is deliberate: if the colour arm never gets a first detection it never
+    # seeds a ROI and keeps paying for full-frame detection, which is exactly
+    # what it does in the field. Sharing state would hide that.
+    be_c = LiteRTBackend(det, lmk, num_threads=nt, detect_input="colour")
+    be_g = LiteRTBackend(det, lmk, num_threads=nt, detect_input="gray")
+    be_b = LiteRTBackend(det, lmk, num_threads=nt, detect_input="both")
+
+    cam = camera.Camera(c["device"], c["width"], c["height"], c["fps"],
+                        c["fourcc"], c["exposure"], c["focus"], c["gain"]).open()
+
+    print("A/B over %.0f s%s -- sit normally and face the camera"
+          % (args.seconds, (" [%s]" % args.label) if args.label else ""))
+
+    n = ok_c = ok_g = ok_b = both = 0
+    disp = []
+    rgb_mean = []
+    face_mean = []
+    t0 = time.perf_counter()
+    while time.perf_counter() - t0 < args.seconds:
+        frame = cam.read()
+        if frame is None:
+            continue
+        n += 1
+        h, w = frame.shape[:2]
+        # Centre of the frame, where a seated face is -- never the whole-frame
+        # mean. Three separate findings in this project came from a whole-frame
+        # statistic being read as a face statistic.
+        box = frame[h // 4:3 * h // 4, w // 3:2 * w // 3]
+        rgb_mean.append(box.reshape(-1, 3).mean(axis=0)[::-1])  # BGR -> RGB
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rc, rg, rb = be_c.detect(rgb), be_g.detect(rgb), be_b.detect(rgb)
+
+        def usable(res):
+            if not res.ok:
+                return None
+            try:
+                _, d = features.extract(res.landmarks, w, h)
+            except Exception:
+                return None
+            if features.is_blinking(d, blink_thr):
+                return None
+            return res.landmarks
+
+        lc, lg, lb = usable(rc), usable(rg), usable(rb)
+        if lc is not None:
+            ok_c += 1
+        if lg is not None:
+            ok_g += 1
+        if lb is not None:
+            ok_b += 1
+        # Brightness INSIDE THE LANDMARK BBOX, which is the only region whose
+        # exposure the detector actually cares about. MEASURED 2026-10-04: in a
+        # run where the face was found in 95% of frames, the centre-of-frame
+        # box read R 11 G 19 B 23 -- it was reporting the wall. A face-shaped
+        # statistic needs a face-shaped box, and the fourth time a convenient
+        # region has been read as a face in this project.
+        lm_any = lc if lc is not None else lg
+        if lm_any is not None:
+            a = np.asarray(lm_any, dtype=np.float64)
+            x0 = max(0, int(a[:, 0].min() * w)); x1 = min(w, int(a[:, 0].max() * w) + 1)
+            y0 = max(0, int(a[:, 1].min() * h)); y1 = min(h, int(a[:, 1].max() * h) + 1)
+            if x1 > x0 and y1 > y0:
+                face_mean.append(
+                    frame[y0:y1, x0:x1].reshape(-1, 3).mean(axis=0)[::-1])
+        if lc is not None and lg is not None:
+            both += 1
+            a, b = iris_px(lc, w, h), iris_px(lg, w, h)
+            disp.append(0.5 * (np.hypot(a[0] - b[0], a[1] - b[1])
+                               + np.hypot(a[2] - b[2], a[3] - b[3])))
+    el = time.perf_counter() - t0
+    cam.close()
+    if not n:
+        print("no frames from the camera")
+        return 2
+
+    m = np.asarray(rgb_mean).mean(axis=0)
+    pct = lambda v: 100.0 * v / n
+    print("\n%d frames in %.1f s (%.1f fps -- BOTH backends per frame)"
+          % (n, el, n / el))
+    print("centre-of-frame R %.1f  G %.1f  B %.1f   (mostly background)"
+          % (m[0], m[1], m[2]))
+    if face_mean:
+        f = np.asarray(face_mean).mean(axis=0)
+        print("THE FACE ITSELF R %.1f  G %.1f  B %.1f   over %d frames%s"
+              % (f[0], f[1], f[2], len(face_mean),
+                 ("   [%s]" % args.label) if args.label else ""))
+    else:
+        print("no face was ever found, so there is no face brightness%s"
+              % (("   [%s]" % args.label) if args.label else ""))
+    print("\n  detector input        face found")
+    print("  colour              %5d  (%3.0f%%)" % (ok_c, pct(ok_c)))
+    print("  gray                %5d  (%3.0f%%)" % (ok_g, pct(ok_g)))
+    print("  BOTH (colour->gray) %5d  (%3.0f%%)   <- the shipped default"
+          % (ok_b, pct(ok_b)))
+    print("  colour and gray     %5d  (%3.0f%%)" % (both, pct(both)))
+    st = be_b.stats
+    print("\nin the BOTH arm the detector ran %d times: %d found by colour, "
+          "%d by the gray retry" % (st["detector_frames"],
+                                    st["detector_colour_hits"],
+                                    st["detector_gray_hits"]))
+
+    if disp:
+        d = np.asarray(disp)
+        print("\niris displacement where both found a face, over %d frames:" % len(d))
+        print("  median %.2f px   p95 %.2f px   max %.2f px"
+              % (np.median(d), np.percentile(d, 95), d.max()))
+        print("  (this is the whole cost channel -- the landmark model sees "
+              "colour in both arms)")
+    else:
+        print("\nno frame where both found a face, so the cost is unmeasured.")
+
+    print("\ngray  minus colour: %+.0f points" % (pct(ok_g) - pct(ok_c)))
+    print("BOTH  minus colour: %+.0f points   <- what shipping this buys"
+          % (pct(ok_b) - pct(ok_c)))
+    if pct(ok_b) < pct(ok_c) - 2:
+        print("\nBOTH LOST TO COLOUR, which it is not supposed to be able to "
+              "do -- it tries colour first. Suspect the ROI-tracking state "
+              "diverging between the arms before believing the detector.")
+    elif pct(ok_b) - pct(ok_c) > 10:
+        print("\nThe gray retry is rescuing real frames in this lighting.")
+    else:
+        print("\nThe retry changes little here. That is the right answer for "
+              "lighting that already worked -- it is the lamp run that has to "
+              "show a gain.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

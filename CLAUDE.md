@@ -525,6 +525,45 @@ accuracy is dominated by calibration quality, which varies more between
 sittings than the lamp varies it. The claim is narrow: **steadier, yes; more
 accurate, unknown.** Steadiness is what dwell selection consumes.
 
+**THE LAMP WAS BLINDING THE FACE DETECTOR, AND THE FIX IS GRAYSCALE -- BUT AS A
+FALLBACK, NEVER AS A SWAP.** MEASURED 2026-10-04. The lamp floods the face with
+one channel: **R 62.5 / G 16.0 / B 27.2** inside the landmark bbox. The
+detector was trained on faces that are not like that and quietly stopped
+finding them. **Brightening does not fix it** -- x1, x2 and x3.5 all found
+nothing on the same frame while grayscale found a face instantly, so it is not
+an exposure problem.
+
+`bin/graycheck` A/Bs three detector inputs on identical frames:
+
+| detector input | white light | red lamp only |
+|---|---|---|
+| colour | **95%** | 76% |
+| gray | 85% | **99%** |
+| **colour, retry gray on failure** | **95%** | **99%** |
+
+**Gray wins the lamp by +24 points and LOSES white light by 10.** A plain swap
+-- the obvious reading of "use grayscale" -- trades one failure for another,
+and only the white-light arm reveals it. So run colour first and retry in gray
+**only on failure**: it cannot lose a frame colour would have found, and it was
+a strict superset of colour on all 18 stashed stills too (10 / 13 / **15**).
+`LiteRTBackend(detect_input="both")` is the default.
+
+It costs nothing where the light is fine -- in the white-light arm the gray
+retry **never ran once** -- and under the lamp 3 of 4 re-detections were found
+only by gray. Worst case, on a frame where nothing is found so the retry always
+runs, `detect()` goes **24.0 -> 48.7 ms** median. Paid only on frames that
+returned nothing, so the visible effect is that recovery from a lost track
+polls at half speed. **The landmark model keeps full colour in every mode** --
+it was never the stage that failed, and nothing measured that starving it is
+safe.
+
+**A centre-of-frame box is NOT a face.** `graycheck` first printed one as "face
+region" and reported R 11 / G 19 / B 23 in a run that found the face in 95% of
+frames -- it was measuring the wall. Measure inside the landmark bbox. That
+makes four: face brightness failed as a proxy for rim detection, gain failed as
+a light meter above its ceiling, frame mean failed as a camera-settling signal,
+and now a centre box has failed as a face.
+
 **`iris_contrast` from `bin/irprobe` is the metric that predicts this**, not
 brightness: room light alone gave 7.70, room+lamp 15.11.
 

@@ -2308,3 +2308,89 @@ fire-on-target caps error by construction, so it cannot move.
 **6.9 selections per minute is still the number to beat**, and it is measured
 on a ~64 px target that moves. The AAC cell it is meant to inform is
 640×540 px and stationary.
+
+## 2026-10-04 — the red lamp was BLINDING the face detector, and grayscale fixes it
+
+**The lamp this project recommends was costing 24 points of detection, and the
+fix is to throw colour away — but only on the stage that was failing, and only
+when it has already failed.**
+
+### The problem
+
+The red lamp makes the gaze point 3.2× steadier (2026-09-23) and it is in every
+recommendation here. It also floods the face with a single channel. MEASURED
+inside the landmark bounding box, 118 frames: **R 62.5 / G 16.0 / B 27.2**.
+Green is a quarter of red. The face detector was trained on faces that are not
+like that, and it quietly stopped finding them.
+
+**Brightening does not fix it, and that is the whole diagnosis.** On a stashed
+frame, the detector was fed the image at ×1, ×2 and ×3.5 brightness and found
+nothing at any of them; grayscale found a face immediately. So this is not an
+exposure problem that more light or more gain would solve — the image is
+bright enough and is simply the wrong colour.
+
+### The A/B, three detector inputs on identical frames
+
+`bin/graycheck`, 20 s per condition, same subject, same seat, minutes apart.
+Every frame goes to all three backends, so nothing is confounded by framing or
+posture.
+
+| detector input | white light (122 fr) | **red lamp only** (119 fr) |
+|---|---|---|
+| colour | **116 (95%)** | 90 (76%) |
+| gray | 104 (85%) | **118 (99%)** |
+| **colour, retry gray on failure** | **116 (95%)** | **118 (99%)** |
+| face R/G/B inside the bbox | not measured (see below) | 62.5 / 16.0 / 27.2 |
+
+**Neither pure input is the right default, and that is the finding.** Gray wins
+the lamp by +24 points and *loses* white light by −10. A plain swap — which is
+what "try the grayscale fix" naturally means — would have traded one failure
+for another, and the white-light arm is the only reason that is known.
+
+**Run colour first and retry in gray only on failure.** It cannot lose a frame
+colour would have found, and both arms confirm it: 95% where colour got 95%,
+99% where colour got 76%. It was also a strict superset of colour on every one
+of 18 stashed stills (colour 10, gray 13, **both 15**), which is the property
+it was designed around rather than a hoped-for one.
+
+### What it costs
+
+**Nothing when the light is fine.** In the white-light `both` arm the detector
+ran 4 times in 122 frames — ROI tracking handled the rest — all 4 were found by
+colour, and **the gray retry never executed once**.
+
+**Under the lamp the retry is doing the work:** of 4 detector runs, 1 found by
+colour and **3 by the gray retry**. The detector is the stage that loses the
+track, and under the lamp it mostly could not recover without gray.
+
+**The worst case is a doubling, and it is in the right place.** On a frame
+where nothing is found, so the retry always runs, `detect()` went
+**24.0 → 48.7 ms** median (p95 39.1 → 67.3). That is not the ~11 ms the
+module's older re-detect comment would suggest — that figure was measured
+another way and does not transfer. But it is paid only on frames that returned
+nothing, where there was nothing to be late for. The visible effect is that
+recovery from a lost track polls at half speed.
+
+The landmark model sees **full colour in every mode**. It was never the stage
+that failed. Where both arms found a face the irises sat a median 1.63 px / p95
+3.49 px apart (lamp; 1.47 / 2.45 white light) — the entire cost channel, since
+gray changes only the crop box, and in the shipped arm it is not even paid.
+
+`LiteRTBackend(detect_input="both")` is now the default.
+
+### A fourth whole-frame statistic read as a face
+
+The first version of `graycheck` printed a centre-of-frame box as "face
+region". In the white-light run it reported **R 11.2 / G 19.1 / B 23.4** — in a
+run that found the face in 95% of frames. It was measuring the wall.
+
+That is why the white-light row above has no face brightness: the run predates
+the fix. It now measures inside the landmark bounding box, and the first run
+with the fix returned R 62.5 / G 16.0 / B 27.2 — reproducing the single-frame
+diagnosis that started this to within 1.5 counts, which is what says the new
+metric is reading what it claims.
+
+**Face brightness has now failed as a proxy for rim detection, gain has failed
+as a light meter above its ceiling, frame mean has failed as a camera-settling
+signal, and a centre box has failed as a face.** Convenient regions and
+convenient scalars keep being trusted past their range in this project.
