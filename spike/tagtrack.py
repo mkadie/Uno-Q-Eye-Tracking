@@ -22,6 +22,7 @@ positions are NORMALISED 0..1 so a calibration survives a resolution change.
 """
 
 import json
+import math
 import os
 import time
 
@@ -111,6 +112,7 @@ class TagTracker(object):
         self.miss_budget = int(miss_budget)
         self.roi = None
         self.misses = 0
+        self.last_corners = None
         self.full_frames = 0      # how often the cheap path failed us
         self.roi_frames = 0
 
@@ -148,8 +150,115 @@ class TagTracker(object):
             self.roi = (max(0, int(centre[0]) - m), max(0, int(centre[1]) - m),
                         int(centre[0]) + m, int(centre[1]) + m)
             self.misses = 0
+            self.last_corners = c
             return centre, side
         return None
+
+
+# The tag is 27 mm of marker inside a 33.75 mm tile (head_track.md). solvePnP
+# needs the MARKER, not the tile -- the quiet zone is not part of what the
+# detector returns.
+TAG_MM = 27.0
+
+# A solve worse than this is not a pose, it is a failure wearing one. The
+# measured garbage case reprojected at 2608 px; a good solve on a real tag
+# is well under a pixel.
+MAX_REPROJ_PX = 5.0
+
+
+def tag_object_points(size_mm=TAG_MM):
+    """The marker's four corners in its own frame, millimetres.
+
+    Order is cv2.aruco's corner order -- top-left, top-right, bottom-right,
+    bottom-left -- with **+y UP**, which is the marker's own frame and NOT
+    the y-down camera convention `rig_geometry.py` uses. Those are different
+    frames and both are correct in their place.
+
+    **SOLVEPNP_IPPE_SQUARE REQUIRES EXACTLY THIS ORDERING AND SIGN.** It
+    does not solve the points you hand it in the order you hand them; it
+    assumes OpenCV's canonical square. MEASURED 2026-10-04: passing y-down
+    points produced a pose with **2608 px of reprojection error** -- not a
+    subtle bias, complete garbage, and it would have been easy to blame the
+    tag, the lighting or the intrinsics instead of the argument. The
+    reprojection figure is returned by `pose_from_corners` precisely so this
+    class of error announces itself.
+    """
+    h = float(size_mm) / 2.0
+    return np.array([[-h, +h, 0.0],
+                     [+h, +h, 0.0],
+                     [+h, -h, 0.0],
+                     [-h, -h, 0.0]], dtype=np.float64)
+
+
+def pose_from_corners(corners, K, dist=None, size_mm=TAG_MM):
+    """6-DoF of one tag: (yaw_deg, pitch_deg, roll_deg, distance_mm, reproj_px).
+
+    THIS IS THE POINT OF THE WHOLE MODULE, and the thing the first version
+    threw away. A tag CENTROID is a position: it cannot distinguish a head
+    that translated from one that rotated, and MEASURED 2026-10-04 that
+    ambiguity made the gaze mapping worse, not better -- 42% of frames with
+    the cursor sweeping the whole screen.
+
+    A pose is an ANGLE, the same kind of quantity the face mesh's yaw/pitch
+    are, and the gaze model wants angles. One marker of known size plus
+    calibrated intrinsics is enough: four coplanar points determine it.
+
+    `dist` must be the REAL distortion coefficients, never zeros -- at 78
+    degrees diagonal the corner distortion is not small and a tag on the
+    brow is nowhere near the optical centre.
+
+    Euler extraction is copied from `marker_board.pose()` deliberately, so
+    a tag pose and a board pose can be compared without an convention
+    argument in between.
+    """
+    imgp = np.asarray(corners, dtype=np.float64).reshape(4, 2)
+    objp = tag_object_points(size_mm)
+    d = np.zeros((5, 1)) if dist is None else np.asarray(dist, dtype=np.float64)
+    # IPPE_SQUARE is the planar-square solver and is both faster and more
+    # stable here than the iterative one, which can settle into the mirrored
+    # pose that any planar target admits.
+    Kf = np.asarray(K, dtype=np.float64)
+    # TRY IPPE_SQUARE, THEN VERIFY, THEN FALL BACK. MEASURED 2026-10-04:
+    # at yaw -25 deg and 600 mm -- where the tag is only ~41 px across,
+    # i.e. the normal working regime -- IPPE_SQUARE returned **ok=True with
+    # a nan rvec**. It reports success and hands back garbage. A nan that
+    # reaches the gaze mapper puts the cursor anywhere at all, silently, so
+    # every solve is checked for finiteness and for a sane reprojection
+    # before it is believed.
+    best = None
+    for flag in (cv2.SOLVEPNP_IPPE_SQUARE, cv2.SOLVEPNP_ITERATIVE):
+        try:
+            ok, rvec, tvec = cv2.solvePnP(objp, imgp, Kf, d, flags=flag)
+        except cv2.error:
+            continue
+        if not ok or not (np.all(np.isfinite(rvec)) and np.all(np.isfinite(tvec))):
+            continue
+        proj, _ = cv2.projectPoints(objp, rvec, tvec, Kf, d)
+        err = float(np.mean(np.linalg.norm(proj.reshape(-1, 2) - imgp, axis=1)))
+        if not math.isfinite(err) or err > MAX_REPROJ_PX:
+            continue
+        best = (rvec, tvec, err)
+        break
+    if best is None:
+        return None
+    rvec, tvec, reproj = best
+    R, _ = cv2.Rodrigues(rvec)
+    if not np.all(np.isfinite(R)):
+        return None
+    sy = math.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
+    if sy > 1e-6:
+        pitch = math.atan2(R[2, 1], R[2, 2])
+        yaw = math.atan2(-R[2, 0], sy)
+        roll = math.atan2(R[1, 0], R[0, 0])
+    else:
+        pitch = math.atan2(-R[1, 2], R[1, 1])
+        yaw = math.atan2(-R[2, 0], sy)
+        roll = 0.0
+    t = tvec.ravel()
+    out = (math.degrees(yaw), math.degrees(pitch), math.degrees(roll),
+           float(t[2]), reproj)
+    # Last gate: nothing non-finite leaves this function, ever.
+    return out if all(math.isfinite(v) for v in out) else None
 
 
 class TagMapper(object):

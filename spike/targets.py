@@ -11,7 +11,7 @@ import time
 import cv2
 import numpy as np
 
-from spike import features
+from spike import features, tagtrack
 
 
 WIN = "calibration"
@@ -85,14 +85,19 @@ def draw_target(canvas, pt, phase, label=""):
                 0.6, (110, 110, 120), 1, cv2.LINE_AA)
 
 
-def collect_point(cam, be, cfg, canvas, pt, label, tracker=None):
+def collect_point(cam, be, cfg, canvas, pt, label, tracker=None, intr=None):
     """Show one target, settle, then average feature vectors over N samples.
 
     `tracker` (optional) is a tagtrack.TagTracker. When given, each accepted
-    sample carries the ArUco tag's image position appended as two extra
-    columns, and a frame where the tag is not found is REJECTED outright
-    rather than averaged in with a gap. A calibration point half of whose
-    samples lack the head signal is worse than one that retried.
+    sample carries five extra columns: the tag's normalised image position
+    (10, 11) and, when `intr` is supplied, its solvePnP yaw, pitch and
+    distance (12, 13, 14). A frame where the tag is not found is REJECTED
+    outright rather than averaged in with a gap -- a calibration point half
+    of whose samples lack the head signal is worse than one that retried.
+
+    BOTH representations are collected every time on purpose, so position
+    and pose can be scored against the SAME samples instead of two
+    sittings.
     """
     settle = cfg["calibration"]["settle_ms"] / 1000.0
     n = cfg["calibration"]["samples_per_point"]
@@ -168,10 +173,21 @@ def collect_point(cam, be, cfg, canvas, pt, label, tracker=None):
             if hit is None:
                 why["no_tag"] += 1
                 continue
-            # Normalised by frame size so a calibration survives a
-            # resolution change, exactly like every other feature here.
-            feat = np.concatenate([feat, [hit[0][0] / float(w),
-                                          hit[0][1] / float(h)]])
+            # Columns 10/11: the tag CENTRE, normalised by frame size so a
+            # calibration survives a resolution change.
+            # Columns 12/13/14: the tag's real yaw, pitch and distance from
+            # solvePnP. Both are appended every time so one collection can
+            # feed either mapper and the two can be compared on IDENTICAL
+            # samples -- which is the only way the comparison is clean.
+            extra = [hit[0][0] / float(w), hit[0][1] / float(h), 0.0, 0.0, 0.0]
+            if intr is not None and tracker.last_corners is not None:
+                pose = tagtrack.pose_from_corners(
+                    tracker.last_corners, intr.K, intr.dist_coeffs)
+                if pose is None:
+                    why["no_pose"] = why.get("no_pose", 0) + 1
+                    continue
+                extra[2], extra[3], extra[4] = pose[0], pose[1], pose[3]
+            feat = np.concatenate([feat, extra])
         if el >= settle:
             feats.append(feat)
             if len(feats) >= n:

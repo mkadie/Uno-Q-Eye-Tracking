@@ -127,6 +127,10 @@ class LinearMapper(object):
     # tracker. features.extract() still returns its own 10 columns untouched,
     # so nothing that does not ask for the tag can be affected by it.
     TAG_X, TAG_Y = 10, 11
+    # 12/13 are the tag's POSE -- real yaw and pitch in degrees from
+    # solvePnP, which are the same KIND of quantity as columns 4/5 and the
+    # reason TagAssistedMapper failed. 14 is the tag's distance in mm.
+    TAG_YAW, TAG_PITCH, TAG_TZ = 12, 13, 14
 
     def __init__(self, ridge=0.1):
         # MEASURED on real 9-point data with STANDARDISED columns:
@@ -227,6 +231,33 @@ class TagAssistedMapper(LinearMapper):
     """
 
     COLS = (0, 1, 2, 3, LinearMapper.TAG_X, LinearMapper.TAG_Y)
+
+
+class TagPoseMapper(LinearMapper):
+    """Gaze from the iris plus the tag's POSE. The swap that should have
+    been tried first.
+
+    `TagAssistedMapper` above swapped the face mesh's yaw/pitch for the
+    tag's x/y and MEASURED WORSE -- 42% of frames with the cursor sweeping
+    the whole screen. The reason was a category error: yaw and pitch are
+    ANGLES, a centroid is a POSITION, and a 2-D centroid cannot tell a head
+    that translated from one that rotated. Lean without turning and it
+    sweeps while the gaze does not move; turn without leaning and it barely
+    moves while the gaze target changes entirely.
+
+    This swaps angles for angles. `tagtrack.pose_from_corners` gives real
+    yaw and pitch from four coplanar corners of a 27 mm marker plus
+    calibrated intrinsics -- the same quantity columns 4 and 5 carry, but
+    from a rigid marker that `bin/headrange` found at 100% across a 3x3 map
+    with skew never above 0.04, where the face mesh's own estimate collapses
+    past 20 degrees of head turn.
+
+    STILL A SWAP, NOT AN ADDITION. Same six features, same seven
+    parameters, same ridge. A win is the signal and not extra capacity, and
+    that is the whole reason the comparison means anything.
+    """
+
+    COLS = (0, 1, 2, 3, LinearMapper.TAG_YAW, LinearMapper.TAG_PITCH)
 
 
 class GazeMapper:

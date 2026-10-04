@@ -54,7 +54,7 @@ import cv2
 import numpy as np
 
 from spike import backends, calib, camera, config, features, menu as menulib
-from spike import tagtrack
+from spike import intrinsics, tagtrack
 from spike import nosleep
 from spike.oneeuro import OneEuroFilter2D
 from spike.targets import (WIN, collect_point, draw_target, grid_points,
@@ -457,7 +457,8 @@ def calibrate_head(cam, canvas, tracker, cal_path, W, H, tag_id):
     return m, rms, span_px
 
 
-def calibrate(cam, be, cfg, canvas, n_pts, rng, tracker=None):
+def calibrate(cam, be, cfg, canvas, n_pts, rng, tracker=None,
+              intr=None, Model=None):
     """Short grid + LINEAR model.
 
     MEASURED 2026-09-21: 9 points with the linear model gives 3.49 deg against
@@ -474,15 +475,18 @@ def calibrate(cam, be, cfg, canvas, n_pts, rng, tracker=None):
     X, y = [], []
     for i, pt in enumerate(pts):
         got = collect_point(cam, be, cfg, canvas, pt,
-                            "%d / %d" % (i + 1, len(pts)), tracker=tracker)
+                            "%d / %d" % (i + 1, len(pts)), tracker=tracker,
+                            intr=intr)
         if got is None:
             return None
         X.append(got)
         y.append(pt)
     if len(X) < 4:
         return None
-    # Same model class either way -- only which two columns it reads changes.
-    Model = calib.TagAssistedMapper if tracker is not None else calib.LinearMapper
+    # Same model class throughout -- only WHICH TWO COLUMNS it reads changes,
+    # which is what keeps the comparison honest.
+    if Model is None:
+        Model = calib.TagAssistedMapper if tracker is not None else calib.LinearMapper
     m = Model().fit(np.asarray(X), np.asarray(y, dtype=float))
     print("fitted %s on %d points, %d features"
           % (Model.__name__, len(X), len(Model.COLS)))
@@ -493,15 +497,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--menu", default=DEFAULT_MENU)
     ap.add_argument("--points", type=int, default=9)
-    ap.add_argument("--mode", choices=("eye", "head", "eyetag"), default="eye",
+    ap.add_argument("--mode", choices=("eye", "head", "eyetag", "eyepose"),
+                    default="eye",
                     help="eye = iris + face mesh (default, unchanged). "
                          "head = ArUco tag on the glasses; no inference at "
                          "all, so it survives the head turns that end eye "
                          "tracking at ~20 deg. "
-                         "eyetag = gaze, but with the TAG supplying head pose "
-                         "in place of the face mesh's yaw/pitch -- same six "
-                         "features, same seven parameters, so a win is the "
-                         "signal and not extra capacity.")
+                         "eyetag = gaze with the tag's POSITION in place of "
+                         "the face mesh's yaw/pitch (MEASURED WORSE -- a "
+                         "centroid cannot tell translation from rotation). "
+                         "eyepose = gaze with the tag's real solvePnP YAW and "
+                         "PITCH in place of them: angles for angles, which is "
+                         "the swap that should have been tried first.")
     ap.add_argument("--tag-id", type=int, default=tagtrack.DEFAULT_TAG_ID,
                     help="ArUco DICT_4X4_50 id on the glasses (head mode). "
                          "This rig's printed tag is id 2, not the 0 the spec "
@@ -542,7 +549,9 @@ def main():
     # Derived here, at the top, because half a dozen branches below read it
     # -- including a signal handler registered before the camera is opened.
     head = (args.mode == "head")
-    eyetag = (args.mode == "eyetag")      # gaze, head pose from the tag
+    eyetag = (args.mode == "eyetag")      # gaze + tag POSITION (refuted)
+    eyepose = (args.mode == "eyepose")    # gaze + tag POSE (angles for angles)
+    usetag = eyetag or eyepose
 
     cfg = config.load(os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "config.toml"))
@@ -614,6 +623,7 @@ def main():
 
     cam = be = mapper = None
     tracker = None
+    intr = None
     if not args.mouse:
         c = cfg["camera"]
         cam = camera.Camera(c["device"], c["width"], c["height"], c["fps"],
@@ -628,13 +638,23 @@ def main():
                   % args.tag_id)
         else:
             be = backends.create(prefer=cfg["inference"]["backend"])
-            if eyetag:
+            if usetag:
                 # BOTH, and the tag is the cheap half: measured at 0.9 fps
                 # against the face mesh's whole budget.
                 tracker = tagtrack.TagTracker(args.tag_id)
-                print("eyetag mode: face mesh for the iris, ArUco id %d for "
-                      "head pose (replacing face-mesh yaw/pitch)"
-                      % args.tag_id)
+                if eyepose:
+                    intr = intrinsics.load(width=cfg["camera"]["width"],
+                                           height=cfg["camera"]["height"])
+                    print("eyepose mode: iris from the face mesh, head YAW/"
+                          "PITCH from solvePnP on ArUco id %d (intrinsics "
+                          "%s)" % (args.tag_id,
+                                   "calibrated" if intr.calibrated
+                                   else "ASSUMED -- distances will be wrong"))
+                else:
+                    print("eyetag mode: iris from the face mesh, head POSITION "
+                          "from ArUco id %d. NOTE: measured WORSE than plain "
+                          "eye mode; --mode eyepose is the corrected version."
+                          % args.tag_id)
 
     # GUI_NORMAL is NOT cosmetic here. This OpenCV is built against Qt5, and
     # cv2.WINDOW_GUI_EXPANDED is *zero* -- so the bare WINDOW_NORMAL we used
@@ -669,8 +689,10 @@ def main():
                       "pointer" % why)
     elif cam is not None:
         print("calibrating %d points (seed %d)..." % (args.points, seed))
+        Model = (calib.TagPoseMapper if eyepose else
+                 calib.TagAssistedMapper if eyetag else calib.LinearMapper)
         mapper = calibrate(cam, be, cfg, canvas, args.points, rng,
-                           tracker=tracker)
+                           tracker=tracker, intr=intr, Model=Model)
         if mapper is None:
             print("calibration aborted; falling back to the pointer")
 
@@ -762,9 +784,17 @@ def main():
                             if hit is None:
                                 raise ValueError("tag lost")
                             fh, fw = frame.shape[:2]
-                            feat = np.concatenate(
-                                [feat, [hit[0][0] / float(fw),
-                                        hit[0][1] / float(fh)]])
+                            extra = [hit[0][0] / float(fw),
+                                     hit[0][1] / float(fh), 0.0, 0.0, 0.0]
+                            if intr is not None and tracker.last_corners is not None:
+                                pose = tagtrack.pose_from_corners(
+                                    tracker.last_corners, intr.K,
+                                    intr.dist_coeffs)
+                                if pose is None:
+                                    raise ValueError("no tag pose")
+                                extra[2], extra[3], extra[4] = (pose[0], pose[1],
+                                                                pose[3])
+                            feat = np.concatenate([feat, extra])
                         if not features.is_blinking(
                                 diag, cfg["inference"]["blink_ear_threshold"]):
                             px, py = mapper.predict(feat)
@@ -818,6 +848,8 @@ def main():
             src = "mouse"
         elif head:
             src = "head" if tag_seen else "head TAG LOST"
+        elif eyepose:
+            src = "eyepose"
         elif eyetag:
             src = "eyetag"
         else:
@@ -933,8 +965,10 @@ def main():
                 print("head recalibration failed: %s" % why)
             continue
         if k == ord('r') and cam is not None:
+            Model = (calib.TagPoseMapper if eyepose else
+                     calib.TagAssistedMapper if eyetag else calib.LinearMapper)
             nm = calibrate(cam, be, cfg, canvas, args.points, rng,
-                           tracker=tracker)
+                           tracker=tracker, intr=intr, Model=Model)
             if nm is not None:
                 mapper, use_mouse = nm, False
                 if hasattr(filt, "reset"):
