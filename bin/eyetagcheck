@@ -54,6 +54,7 @@ def main():
 
     n = both = face_only = tag_only = neither = blinks = 0
     tag_xy = []
+    lums = []
     t0 = time.perf_counter()
     while time.perf_counter() - t0 < args.seconds:
         frame = cam.read()
@@ -62,6 +63,12 @@ def main():
         n += 1
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         hit = tr.find(gray)
+        # Brightness of the CENTRE of the frame, where a seated face is --
+        # not the whole frame. A lamp aimed at a head moves the face region
+        # and barely moves the frame mean, which is the trap this project
+        # has now fallen into three times.
+        h, w = gray.shape[:2]
+        lums.append(float(gray[h//4:3*h//4, w//3:2*w//3].mean()))
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         res = be.detect(rgb)
         has_face = False
@@ -92,12 +99,15 @@ def main():
         return 2
 
     pct = lambda v: 100.0 * v / n
+    face_lum = float(np.median(lums)) if lums else 0.0
     print("\nframes %d in %.1f s -> %.1f fps" % (n, el, n / el))
     print("  BOTH face and tag : %4d  (%3.0f%%)   <- what eyetag consumes" % (both, pct(both)))
     print("  face only, no tag : %4d  (%3.0f%%)" % (face_only, pct(face_only)))
     print("  tag only, no face : %4d  (%3.0f%%)   <- occlusion suspect" % (tag_only, pct(tag_only)))
     print("  neither           : %4d  (%3.0f%%)" % (neither, pct(neither)))
     print("  blinks skipped    : %4d" % blinks)
+    print("  face-region brightness: %.0f  (under ~60 and the mesh struggles)"
+          % face_lum)
     if tag_xy:
         a = np.asarray(tag_xy)
         print("  tag centre wandered %.0f x %.0f px while you held still"
@@ -106,16 +116,31 @@ def main():
     ok = True
     if pct(both) < 80:
         ok = False
-        if tag_only > face_only:
-            print("\nTHE TAG IS WINNING AND THE FACE IS NOT. The tag may be "
-                  "occluding an eye, or sitting where it shadows one. Move it "
-                  "further from the eye line and run this again.")
+        # ORDER MATTERS HERE, and the first version got it wrong. It saw
+        # tag_only > face_only and announced "the tag is occluding an eye".
+        # The actual cause was a dark room: the face mesh needs more light
+        # than an ArUco tag does, so darkness ALWAYS looks like tag-beats-
+        # face. A captured frame settled it in seconds -- the tag was on the
+        # brow, 56 px clear of the nearest iris, occluding nothing.
+        #
+        # So lighting is checked FIRST, and occlusion is only suggested when
+        # the frame is bright enough for that to be the better explanation.
+        if face_lum < 60:
+            print("\nTHE FACE IS TOO DARK (region mean %.0f). The mesh needs "
+                  "more light than the tag does, so a dark room always looks "
+                  "like the tag winning. Turn the room lights on and re-run "
+                  "BEFORE suspecting anything else." % face_lum)
+        elif tag_only > face_only:
+            print("\nTag found, face missing, and the light is adequate "
+                  "(region mean %.0f). NOW occlusion is worth suspecting -- "
+                  "capture a frame and look at where the tag sits relative "
+                  "to the eyes." % face_lum)
         elif face_only > tag_only:
             print("\nTHE FACE IS THERE AND THE TAG IS NOT. Check the tag id, "
-                  "the lights, and that the tag is flat and unglared.")
+                  "and that the tag is flat and unglared.")
         else:
-            print("\nBOTH SIGNALS ARE INTERMITTENT. Lighting first -- a dark "
-                  "room reads as every other failure.")
+            print("\nBOTH SIGNALS ARE INTERMITTENT -- suspect movement or "
+                  "working distance before anything subtler.")
     print("\n%s" % ("READY for an eyetag calibration."
                     if ok else "NOT ready -- fix the above first."))
     return 0 if ok else 1
