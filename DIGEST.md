@@ -39,7 +39,7 @@ A tracker that is bias-dominated, decays with movement, collapses past 20 deg
 of rotation and turns excellent when someone holds the head is not short of
 iris resolution.
 
-**The fix, suggested by Massimo Manzi at Maker Faire: a carrier board for
+**The fix, suggested by Massimo Banzi at Maker Faire: a carrier board for
 this SoC with two CSI ports.** Stereo gives head pose directly instead of
 inferring it from a monocular face mesh -- and the face mesh's pose estimate
 is exactly what dies past 20 deg, when it is most needed. NoIR sensor

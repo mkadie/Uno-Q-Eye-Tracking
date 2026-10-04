@@ -50,6 +50,14 @@ Last updated: **2026-09-30**, end of session — HEAD POINTING WORKS, tuned and 
 > **Anything new added to `board_artifacts/` or `docs/` must go through it
 > too, with `--raw` for frames that carry no drawn annotations.**
 
+> **THE ARTICLE IS PUBLISHED** and is checked against the measurements in
+> RESULTS.md § "The published article, checked against the measurements".
+> <https://www.digikey.com/en/maker/projects/eye-tracking-for-special-needs-with-uno-q-unoqdreamlab/40da686f404244749e2e62fe5d30972a>
+> **It is Massimo BANZI, not Manzi** -- this repo had it wrong from a verbal
+> mention until the article corrected it. Three claims still need
+> reconciling: 50-70 cm (measured band is 50-65), a 4x2 grid (the gaze build
+> is 3x2), and a 27 Sep date for head tracking (built 30 Sep).
+
 ## The 60-second version
 
 The **glasses-rim fiducial now measures distance on real hardware** and does

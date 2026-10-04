@@ -1,3 +1,47 @@
+# The published article, checked against the measurements, 2026-10-03
+
+<https://www.digikey.com/en/maker/projects/eye-tracking-for-special-needs-with-uno-q-unoqdreamlab/40da686f404244749e2e62fe5d30972a>
+
+The contest write-up. Read back against this repo's numbers so the published
+claims and the measured ones cannot drift apart.
+
+**CORRECTED FROM THE ARTICLE: the name is Massimo BANZI, not Manzi.** The
+dual-CSI suggestion was recorded here from a verbal mention and spelled
+wrong in `RESULTS.md`, `DIGEST.md`, the Drive snapshots and a commit
+message. The article -- written by the person who had the conversation --
+says Banzi, and Massimo Banzi is a co-founder of Arduino, which is the
+likelier person to be discussing an Arduino carrier board at an Arduino
+stand. Fixed everywhere a document can be fixed; the commit message stands
+as written because history is not rewritten for a spelling.
+
+| article says | repo measures | verdict |
+|---|---|---|
+| calibration guides through **9 points** | `cal_points = 9`, all 136 faire sessions | **agrees** |
+| sit **50–70 cm** from the camera | 500–650 mm; at 700 mm detection falls to **57%** | **top end overstated** |
+| holds within one box on a **4x2** screen | 3x2 chosen; "4x2 is tight on both axes at p95" | **see below** |
+| "lots of drift" early on | bias/drift-dominated, scatter/error 0.22 | **agrees** |
+| head movement / losing an eye is the cause | 71% -> 5% valid past 20 deg of turn | **agrees, and now quantified** |
+| ArUco head tracking "near-perfect" | 100% detection, 0 losses in 359 frames | **agrees** |
+| that work dated **27 Sep 2026** | head pointing was built **30 Sep** | **date to check** |
+| plan: 2 CSI + NoIR + 850 nm | recorded here with the compute caveat | **agrees** |
+
+**On 4x2 vs 3x2 -- both can be true and the article should say which.** The
+T-Rex Talker device itself is a 4x2 board; the gaze build here is 3x2,
+deliberately, because at 504 mm a 4x2 cell is tight against a p95 of 556 px
+on both axes. "Holds within a single box on a 4x2 screen" is a fair claim
+about the *device's* layout and a generous one about the *gaze* build.
+
+**On 50–70 cm.** 70 cm is not a working distance, it is the edge of one:
+the rim annulus gap falls to 5.9 px against a 4.0 px floor and detection
+drops to 57%. The faire's own seating median was 495 mm. **50–65 cm is the
+honest range** and is what the repo says.
+
+**On the 27 Sep date.** The ArUco *marker board* work is 2026-09-20 and head
+*pointing* -- a tag on the glasses driving the pointer -- was built
+2026-09-30. Nothing in this repo's history lands on 27 Sep except the faire
+itself, which captured no data that day. Worth reconciling before the
+article is cited as a timeline.
+
 # Where this is going: head movement is the problem, and two cameras are the fix
 
 ## The observation that frames everything
@@ -32,7 +76,7 @@ failing to know where the head is.**
 
 ## The fix: two cameras, and an IR source the camera can actually see
 
-Suggested by **Massimo Manzi at Maker Faire**: there is a carrier board for
+Suggested by **Massimo Banzi at Maker Faire**: there is a carrier board for
 this SoC with **two CSI camera ports**. Two cameras give head pose directly
 by stereo, rather than inferring it from a monocular face mesh, which is what
 would let the gaze mapping be corrected for head movement instead of
