@@ -6,12 +6,12 @@ project knowledge, a fresh chat, a collaborator). Everything here is
 RESULTS.md, RESTART.md, GLASSES.md, PLAN.md — stay in the repo; this is the
 subset that travels.
 
-Last updated **2026-09-30**.
+Last updated **2026-10-03**.
 
 ## The project in five lines
 
 Eye tracking bolted onto a sip-n-puff assistive device. Arduino UNO Q 4GB
-(QRB2210, 4× Cortex-A53, **no NPU** — inference is CPU-bound), Logitech C920x,
+(QRB2210, 4× Cortex-A53, **Adreno 702 GPU, no NPU**), Logitech C920x,
 Debian. Deadline **30 Sep 2026**, DigiKey/Arduino Dream Lab contest. A separate
 CircuitPython board does breath sensing and **stays the USB HID endpoint** —
 the UNO Q is a sensor that streams gaze over UART, so the tracker is a bolt-on
@@ -430,6 +430,67 @@ targets of a 3x3 map, skew never above 0.04.
 tag on this rig is **id 2**, not the id 0 the spec named; a **dark room**
 collects 0 samples and blames the head; and dropping to 960x540 to chase
 frame rate costs a third of the detections for 2 fps.
+
+## The silicon: a GPU that loses, an NPU that does not exist
+
+CHECKED 2026-10-03 against Qualcomm's product brief and the board, because
+"inference is CPU-bound" had been written down as a hardware fact when it was
+a choice.
+
+**There is no NPU.** The brief lists "AI Performance: Hexagon Processor,
+Adreno 702" and says inference runs "via CPU and GPU". The Hexagon on this
+part is the **always-on sensor/audio DSP** -- no HVX, no HMX, no TOPS figure
+-- and on this board it is not exposed to userspace at all: no
+`/dev/fastrpc*`, `/dev/adsprpc` or `/dev/cdsprpc`, and no QNN or SNPE
+runtime. **There is no driver to fix.**
+
+**The GPU is real and already driven.** Mesa 25.2.6, `a702_sqe.fw` loaded,
+**OpenCL 3.0 via rusticl** (device `FD702`, 844 MHz, fp16, **1 compute
+unit**) and **Vulkan via turnip**. OpenCV is built with OpenCL and reports
+`useOpenCL: True`.
+
+**And it is HALF the speed of the CPU.** SGEMM through OpenCV's OpenCL path:
+
+| | CPU | GPU via rusticl |
+|---|---|---|
+| N=512 | 6.8 GFLOPS | 3.5 GFLOPS (**0.52x**) |
+| N=1024 | 9.9 GFLOPS | 5.3 GFLOPS (**0.54x**) |
+
+The part's theoretical fp32 is of order 200 GFLOPS, so this is almost
+certainly **rusticl being untuned on freedreno rather than the silicon** --
+but untuned is what is installed, and a benchmark beats a datasheet. The
+only GPU path with a real chance is **Vulkan via turnip** (ncnn or MNN),
+which bypasses rusticl entirely. Untried.
+
+**The bottleneck is the landmark model, and a synthetic benchmark hid it.**
+Timed on random noise, inference looked like 10.7 ms -- because no face is
+found in noise, so the landmark stage never runs. With a real face:
+
+| stage | per frame |
+|---|---|
+| **478-point landmark model** | **46.6 ms** (97% of the pipeline) |
+| face detector | 14.4 ms, but runs on 3 frames in 80 (ROI tracking) |
+| MJPEG decode | 15.4 ms, on the grabber thread, off the critical path |
+| crop / warp / cvtColor | under 2 ms |
+
+**Always benchmark inference on a frame with a face in it.**
+
+**The one real win was one number.** `CAP_PROP_BUFFERSIZE` was 1 "for
+latency" and delivered neither:
+
+| buffers | fps | read wait | reads returning instantly |
+|---|---|---|---|
+| 1 | 19.0 | 63.5 ms | 0% |
+| **2** | **29.9** | **32.8 ms** | **0%** |
+
+With one buffer the driver has nowhere to put frame N+1 while we decode N,
+drops it, and the next grab waits two full intervals. **It costs no latency
+and that is measured** -- 0% of reads returned without waiting at any buffer
+count. This lifts the camera-bound paths (head pointing, the game); the eye
+pipeline stays near 21 fps because it is landmark-bound.
+
+**Venus, the hardware video decoder, cannot help:** H264/VP9/HEVC only, and
+the C920 offers only YUYV and MJPG here.
 
 ## Open
 
