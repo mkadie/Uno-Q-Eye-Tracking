@@ -49,17 +49,19 @@ webcam should, which is why only the lamp's red 625 nm LEDs do any work.
 On a bare sensor, 850 nm gives corneal glints and bright/dark pupil -- and
 `iris_contrast` is already the measured predictor of steadiness here.
 
-**The risk is compute and it is unmeasured.** No NPU; inference is CPU-bound;
-one 720p stream alone is 19.0 fps before any inference. Two streams plus
-stereo plus a face mesh may not fit. Measure two simultaneous captures before
-buying anything.
+**The risk is compute and it is unmeasured.** No NPU, and the GPU measured
+SLOWER than the CPU (below). One 720p stream alone is 29.9 fps before any
+inference, and the landmark model alone costs 46.6 ms. Two streams plus
+stereo plus a face mesh almost certainly does not fit. **Measure two
+simultaneous captures before buying anything.**
 
-**Cheaper experiment first, on hardware in hand:** head tracking already
-produces a clean head-position signal at 18 fps for almost no compute, and
-`LinearMapper` already takes yaw/pitch as features. **Feed the TAG position
-into the gaze mapping as the head-pose feature.** If head movement is what
-breaks gaze, that is the same compensation the second camera buys, for a day
-of work instead of a purchase order. Untested.
+**Cheaper experiment first, and it is now BUILT:** `bin/talker --mode
+eyetag` feeds the TAG's position into the gaze mapping in place of the face
+mesh's yaw/pitch. A **swap, not an addition** -- same six features, same
+seven parameters -- so a win is the head signal and not extra capacity. If
+head movement is what breaks gaze, this is most of what the second camera
+buys, on hardware already on the desk. **Built 2026-09-30, never yet run
+against a real face.**
 
 ## Where it stands
 
