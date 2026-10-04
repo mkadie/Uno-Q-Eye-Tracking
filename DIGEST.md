@@ -6,7 +6,7 @@ project knowledge, a fresh chat, a collaborator). Everything here is
 RESULTS.md, RESTART.md, GLASSES.md, PLAN.md — stay in the repo; this is the
 subset that travels.
 
-Last updated **2026-10-03**.
+Last updated **2026-10-04**.
 
 ## The project in five lines
 
@@ -313,9 +313,9 @@ It also separates two things the first version conflated: **scatter**
 (steadiness, which light improves) from **offset** (accuracy, which
 calibration improves).
 
-## Proxies trusted past their range — three times now
+## Proxies trusted past their range — four times now
 
-All three cost real time, and all three look like success:
+All four cost real time, and all four look like success:
 
 - **Camera `gain` is a light meter only below its ceiling.** It read 109 in
   all four lighting conditions while face brightness varied 5.6× and iris
@@ -329,8 +329,79 @@ All three cost real time, and all three look like success:
   that light was not the variable. The room lights had been switched on
   mid-trial.
 
+- **A centre-of-frame box is not a face.** `bin/graycheck` printed one as
+  "face region" and reported R 11 / G 19 / B 23 in a run that found the face
+  in **95%** of frames. It was measuring the wall. Measured inside the
+  landmark bounding box instead, the same face read R 62.5 / G 16.0 / B 27.2.
+
 The metric that does predict it is **iris contrast** — the edge the landmark
 model actually localises. Room light alone 7.70, room plus lamp 15.11.
+
+## The red lamp was blinding the face detector — fixed 2026-10-04
+
+**The lamp this project recommends had been costing 24 points of face
+detection since 2026-09-23.** It floods the face with one channel: R 62.5 /
+G 16.0 / B 27.2 inside the landmark bbox. The detector was trained on faces
+that are not like that.
+
+**Brightening does not fix it**, which is the diagnosis and not a detail: ×1,
+×2 and ×3.5 all found nothing on the same frame while grayscale found a face
+instantly. The image is bright enough and is simply the wrong colour.
+
+`bin/graycheck`, three detector inputs on identical frames, 20 s per condition:
+
+| detector input | white light (122 fr) | red lamp only (119 fr) |
+|---|---|---|
+| colour | **116 (95%)** | 90 (76%) |
+| gray | 104 (85%) | **118 (99%)** |
+| **colour, retry gray on failure** | **116 (95%)** | **118 (99%)** |
+
+**Gray is a FALLBACK, not a swap, and the control arm is the only reason that
+is known.** Gray wins the lamp by +24 points and *loses* white light by 10.
+The obvious reading of "use grayscale" trades one failure for another and
+looks like a success, because the lamp run is the one you are staring at while
+debugging it. Run colour first, retry gray only on failure: it cannot lose a
+frame colour would have found, and it was a strict superset of colour on all
+18 stashed stills too (10 / 13 / **15**).
+
+**It costs nothing where the light is fine** — in the white-light arm the gray
+retry *never executed once*, because ROI tracking meant the detector ran only
+4 times in 122 frames. Under the lamp, 3 of 4 re-detections were found **only**
+by gray. Worst case, on a frame where nothing is found so the retry always
+runs, `detect()` goes 24.0 → 48.7 ms median; paid only on frames that returned
+nothing, so recovery from a lost track polls at half speed. The landmark model
+keeps full colour in every mode — it was never the stage that failed.
+
+**This may partly explain the faire.** The head-turn cliff was 71% → 5% past
+20°, measured with the lamp on. A detector starting from 76% instead of 95%
+has far less margin to lose to a turned head, so the cliff may be shallower
+than recorded.
+
+## Two CSI ports and two NoIR cameras — in hand 2026-10-04, nothing measured
+
+The hardware the two-camera hypothesis needed. Unknown and all of it
+load-bearing: sensor, lens FOV, **baseline (caliper it — a drawing was 15.4%
+wrong about the rim separation for months)**, and whether both ports stream at
+once.
+
+**The blocker is compute, not capture.** The landmark model is 46.6 ms and 97%
+of the pipeline; the ceiling is 20.9 fps with one camera and ~10 with two. The
+GPU measured **0.54× the CPU** and there is no NPU. **So do not design for two
+landmark runs:** one camera for eyes, one for **tag-only head pose**, which is
+cheap and is exactly what the head-movement hypothesis wants from a second
+view. That is reasoning, not a measurement — it is the design to measure first.
+
+**Today's grayscale fix is a prerequisite for NoIR, not a coincidence.** An
+850 nm image is monochrome, which is precisely the condition that dropped
+colour detection to 76%. For an IR feed set `detect_input="gray"` explicitly
+rather than paying the fallback's doubled detector on every frame. The red
+lamp's one 850 nm LED also starts contributing — the C920's IR-cut filter is
+why only its red LEDs do anything today — and IR is invisible to the subject,
+which beats a red glow in the face at a faire.
+
+**But NoIR makes the window case worse**, and that case is already the only
+untested one. No IR-cut filter means sunlight floods the sensor. Measure it
+early.
 
 ## Demos
 
@@ -505,8 +576,13 @@ the C920 offers only YUYV and MJPG here.
    position replaces the face mesh's yaw/pitch as the head-pose feature -- a
    swap, not an addition, so a win is the signal and not extra capacity. If
    it works it is most of what a second camera would buy.
-2. **Measure two simultaneous camera captures** before ordering the dual-CSI
-   board. The landmark model alone is 46.6 ms; the budget is the risk.
+2. **The dual-CSI board and two NoIR cameras are HERE.** Record the specs,
+   caliper the baseline, confirm both ports stream at once -- and do not
+   design for two landmark runs. See the section above.
+2a. **Re-run the head-turn sweep with the detector fixed.** The 71% -> 5%
+   cliff past 20 deg was measured with the lamp costing the detector 24
+   points. That cliff is what explained the 10% who got nothing, and it bears
+   on whether a second camera solves the right problem.
 3. **Try Vulkan via turnip** (ncnn or MNN) for the landmark model. It is the
    only GPU path left after rusticl measured 0.54x the CPU.
 4. **A controlled head-vs-eye A/B** -- same targets, duration, alternating.

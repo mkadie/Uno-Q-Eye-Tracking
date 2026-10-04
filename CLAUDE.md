@@ -15,6 +15,16 @@ Hardware: UNO Q 4GB (QRB2210, 4x Cortex-A53 @ 2.0 GHz, **Adreno 702 GPU**,
 **no NPU**). Logitech C920x on USB. A separate CircuitPython board
 does breath sensing over I2C and is the USB HID endpoint.
 
+**A media carrier board with two CSI ports and two NoIR cameras arrived
+2026-10-04.** Nothing about them is measured yet -- not the sensor, not the
+lens FOV, not the baseline, not whether both ports stream at once. See
+RESTART.md for what to record first. Two things are known in advance and both
+matter: **the blocker is compute, not capture** (the landmark model is 46.6 ms
+and 97% of the pipeline, the GPU measured 0.54x the CPU, so do NOT design for
+two landmark runs -- one camera for eyes, one for tag-only head pose), and
+**an IR feed is monochrome, so set `detect_input="gray"` explicitly** rather
+than paying the colour-then-gray fallback on every frame.
+
 ## Run order — each gates the next
 
 ```

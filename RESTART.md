@@ -1,6 +1,26 @@
 # RESTART — read this first after a crash or power loss
 
-Last updated: **2026-09-30**, end of session — HEAD POINTING WORKS, tuned and mapped. Code public on GitHub. **Board powered down.**
+Last updated: **2026-10-04**, end of session — the RED LAMP WAS BLINDING THE FACE DETECTOR and a grayscale fallback fixes it. **The media carrier board and two NoIR cameras are now IN HAND.** Code public on GitHub. **Board left powered ON — see "Where we are right now".**
+
+> **THE LAMP THIS PROJECT RECOMMENDS WAS COSTING 24 POINTS OF FACE DETECTION,
+> and it had been doing so since 2026-09-23.** MEASURED 2026-10-04: the lamp
+> floods the face with one channel (R 62.5 / G 16.0 / B 27.2 inside the
+> landmark bbox) and colour detection fell to **76%**. Feeding the DETECTOR
+> grayscale takes it to **99%**. Brightening does not fix it -- x1, x2 and x3.5
+> all found nothing on the same frame -- so it was never an exposure problem.
+>
+> **But grayscale is a FALLBACK, not a swap, and the control arm is the only
+> reason that is known:** gray wins the lamp by +24 points and **LOSES white
+> light by 10** (95% -> 85%). Shipped behaviour is colour first, retry gray
+> only on failure. `LiteRTBackend(detect_input="both")`, now the default.
+> `bin/graycheck` re-runs the A/B; run it in BOTH lights or the answer is
+> half an answer.
+>
+> **This may partly explain the faire.** The head-turn cliff was 71% -> 5%
+> past 20 deg and the lamp was on throughout. A detector starting from 76%
+> instead of 95% has far less margin to lose to a turned head. **Re-run the
+> head-turn sweep now that the detector is not handicapped** -- the cliff may
+> be shallower than measured.
 
 > **THE FAIRE RAN Fri 25 + Sat 26 Sep: 125 visitors, 2413 throws, p50 6.26
 > deg — and SUNDAY CAPTURED NOTHING.** 87% of visitors got a median error of
@@ -76,6 +96,8 @@ numbers; this is the orientation.
 | lighting conditions | **partial** — mild backlight fine; the daylight/window case is NOT done |
 | Gate 1c bare-faced | **DONE — 3.27 deg / 5.56 p95 -> PATH B.** Repeat in good light. |
 | red lamp | **WORKS — 3.2x steadier, CI excludes zero, reproduced in the game. USE IT.** |
+| red lamp vs the DETECTOR | **it was blinding it — 76% colour, 99% gray. FIXED 2026-10-04**, `detect_input="both"` |
+| media carrier + 2 NoIR cams | **IN HAND 2026-10-04, nothing measured yet.** See its section — the blocker is compute, not capture |
 | fixation protocol | **REBUILT** — the old one measured the subject's drift, not the tracker |
 | faire kiosk | **RUNS on hardware** — auto-login confirmed, all three rows launch |
 | gaze talker | **selects by DWELL since 2026-09-30.** Before that it needed a key it could not receive |
@@ -86,7 +108,7 @@ numbers; this is the orientation.
 | bunny game | seats the player before calibrating; linear always; see its `GAZE.md` |
 | `DIGEST.md` | portable ~8 KB summary for claude.ai / a fresh chat. **Re-upload when findings land.** |
 
-Suite is **195 passing** here, 194 + 1 skip on the board. No hardware needed.
+Suite is **260 passing** here. No hardware needed.
 
 **What the faire measured, in one line:** 6.26 deg p50 over 125 visitors, 87% of them at 10 deg or better, **10% who got nothing** — and the thing that separated that 10% was HEAD TURN, a cliff at 20 deg, not distance. `RESULTS.md` has it in full.
 
@@ -718,6 +740,87 @@ Placement matters if it does work: **on-axis** (beside the lens) gives a
 bright pupil by retroreflection, **off-axis** gives a dark pupil with a glint.
 Try both; they are different images and the landmark model may prefer either.
 
+## The media carrier board and two NoIR cameras — IN HAND, nothing measured
+
+Arrived 2026-10-04. This is the hardware the two-camera hypothesis needed, and
+the hypothesis is the strongest open idea in the project: at the faire the one
+visitor whose head was **held still** by her father got a steady, low-noise
+cursor and four bunnies, while the measured head-turn cliff was 71% -> 5% past
+20 deg. Two views can compensate head movement that one cannot.
+
+**RECORD THESE BEFORE WRITING ANY CODE AGAINST IT.** None is known yet and
+every one of them changes the geometry:
+
+- the carrier board's exact model, and how the UNO Q mounts to it
+- each camera's **sensor** (IMX219 / IMX708 / other), resolution and frame rates
+- each **lens FOV**, which is what sets working distance and iris pixel count
+- the **baseline** — centre-to-centre spacing of the two cameras, calipered,
+  not read off a drawing. This is to stereo what `separation_mm` was to the
+  rims, and that number was 15.4% wrong from a drawing for months.
+- whether both CSI ports can stream **simultaneously** on this kernel, and at
+  what rate. `/dev/video*` enumeration and `v4l2-ctl --list-formats-ext`.
+
+### The blocker is COMPUTE, and it is not the capture
+
+The old open item said "measure two simultaneous captures before ordering the
+board". The board is here, so the question changes — and the capture was never
+the real risk:
+
+**The landmark model is 46.6 ms, 97% of the pipeline, and the ceiling is
+20.9 fps with ONE camera.** Running it on two views is ~10 fps. **The GPU will
+not rescue this**: measured 2026-10-03 at **0.54x the CPU** through rusticl on
+the Adreno 702, and there is no NPU on this part at all.
+
+**So do NOT design for two landmark runs.** The cheap architecture, and the
+first one to try: **one camera does EYES (the expensive landmark model), the
+other does HEAD POSE ONLY (the ArUco tag, or the rims)**. Tag detection is
+cheap — head pointing already runs at near camera rate with zero losses — so
+the second view costs almost nothing, and head pose is exactly what the
+head-movement hypothesis wants from it. That sidesteps the 2x landmark cost
+entirely. This is reasoning, not a measurement; it is the design to measure
+first, not a conclusion.
+
+**One piece of good news: CSI is not USB.** The 720p MJPEG path costs 15.4 ms
+of decode and is capped by USB 2.0 bandwidth — which is why 720p YUYV
+delivers 10 fps against a descriptor claiming 30. CSI cameras avoid both. The
+`CAP_PROP_BUFFERSIZE = 2` finding may not transfer either; re-measure it.
+
+### NoIR: today's grayscale fix is a PREREQUISITE, not a coincidence
+
+**An 850 nm IR image is monochromatic — exactly the condition that dropped
+colour detection to 76% today.** Without the fix shipped this session, a NoIR
+camera under IR illumination would have hit the same wall and it would have
+looked like a camera problem.
+
+**For a NoIR/IR feed, set `detect_input="gray"` EXPLICITLY. Do not rely on
+`"both"`.** With colour never working, the fallback pays the doubled detector
+on *every* frame (24.0 -> 48.7 ms median), where `"gray"` pays nothing. The
+fallback is correct for a colour camera in unknown light; it is wasteful for a
+camera whose feed is monochrome by construction.
+
+**The red lamp's 850 nm LED becomes useful.** Today only its 16 red LEDs do
+anything, because the C920 has an IR-cut filter and ~625 nm red passes it while
+850 nm does not. A NoIR camera has no such filter, so the IR LED starts
+contributing — and IR is invisible to the subject, which is better for a faire
+than a red glow in the face.
+
+**But NoIR makes the WINDOW case worse, and that case is already untested.**
+No IR-cut filter means ambient IR — sunlight above all — floods the sensor.
+The daylight/backlit condition is the one a faire actually presents and the one
+condition never measured; adding NoIR raises its risk rather than lowering it.
+**Measure `bin/lighttest window` on the NoIR camera early, not late.**
+
+### New work this needs that does not exist yet
+
+- **Stereo calibration.** `tools/calibrate_camera.py` does single-camera
+  intrinsics only. Two cameras need the relative rotation and translation
+  between them, and every rule in CLAUDE.md about tilting the board and
+  `fx`/`fy` agreeing still applies, per camera, before any stereo solve.
+- **`spike/camera.py` assumes one device** and applies C920 UVC controls. A CSI
+  sensor exposes a different control set, and the "apply controls AFTER
+  STREAMON" rule was measured on the C920 family — re-verify it, do not assume
+  it transfers either way.
+
 ## Still open, roughly in priority order
 
 0. **Launch the head row from `bin/menu` once.** Head mode has only ever
@@ -728,9 +831,12 @@ Try both; they are different images and the landmark model may prefer either.
    The cheapest test of the whole head-movement hypothesis, on hardware
    already here. If it works it is most of what the two-camera board would
    buy. See RESULTS.md ("A cheaper experiment to run FIRST").
-0b. **Measure two simultaneous camera captures** before ordering the dual-CSI
-   carrier board. No NPU, and one 720p stream alone is 19.0 fps before any
-   inference. The compute budget is the risk, and it is unmeasured.
+0b. **The carrier board and two NoIR cameras are HERE.** Superseded: this no
+   longer gates an order. First steps are in its own section above —
+   record the specs, caliper the baseline, confirm both CSI ports stream at
+   once, and **do not design for two landmark runs** (one camera for eyes,
+   one for tag-only head pose). The compute budget is still the risk and is
+   still unmeasured.
 0c. **Measure head pointing against the eye numbers properly.** Today's
    comparison was two sessions with different tasks. A controlled A/B --
    same targets, same duration, alternating -- would say what head pointing
@@ -743,6 +849,11 @@ Try both; they are different images and the landmark model may prefer either.
    Food & Drink, right-click home from a submenu, the `exit` chip (two
    clicks). Game: the `X`, bottom right (two clicks). All four were written
    2026-09-24 and **not one has been pressed by a human**.
+0d. **Re-run the head-turn sweep with the detector fixed.** The 71% -> 5%
+   cliff past 20 deg was measured with the lamp on and the detector losing 24
+   points to it. That cliff is the single thing that explained the 10% of
+   visitors who got nothing, and it may be shallower than recorded. Cheap,
+   and it bears on whether the two-camera board is solving the right problem.
 1. **Repeat Gate 1c in good light.** 3 minutes, and it is what the whole
    schedule now rests on. The 3.27 deg run was at face brightness **55.4**
    against the **128.7** measured earlier the same evening; a dim iris is a
@@ -784,6 +895,39 @@ Try both; they are different images and the landmark model may prefer either.
 
    The measurement report is a Claude Doc, not Drive:
    https://claude.ai/artifact/DZrdz44qiA5NHy175mNJed
+
+## Board state at the end of the 2026-10-04 session
+
+**THE BOARD WAS LEFT POWERED ON.** It was not shut down, because the session
+ended on "update" rather than "exit" and a powered-off board needs physical
+access to come back. Shut it down when convenient:
+
+```
+./hil raw 'sudo systemctl poweroff'
+```
+
+- governor **`performance`**, `light-locker` paused, camera **free**
+- IP **10.42.0.119** at last contact; it changes between boots and `hil` will
+  hunt for it by hostname if the address goes silent
+- uptime was ~5 h, no crashes this session
+
+**Two housekeeping items left deliberately undone, decide and clear them:**
+
+- **`~/shots` holds 3486 screen frames, 432 MB.** A `--mode eyepose` talker was
+  found still running after 32 minutes, holding the camera and recording every
+  0.5 s; it had to be killed before `bin/graycheck` could open the camera. The
+  frames are 32 minutes of a mostly idle screen and are probably worthless, but
+  they were not deleted without asking. **Root partition is at 68%, 3.1 G
+  free.** `rm -rf ~/shots` when you have looked or decided not to.
+- **A talker left running holds the camera and silently blocks every other
+  measurement.** It presents as `could not open /dev/video0`, which reads
+  exactly like a failed camera. `fuser -v /dev/video0` names the holder in one
+  line; check it before suspecting hardware.
+
+Other stashes on the board, still wanted: `~/shots_eye/` (838 frames),
+`~/shots_eyetag/`, `/tmp/ab_eye_keep.log`, `/tmp/ab_eyetag.log`,
+`/tmp/ab_eyepose.log`, and the four camera stills in `/tmp/*.png` that the
+grayscale A/B was first validated against.
 
 ## Where we are right now
 
