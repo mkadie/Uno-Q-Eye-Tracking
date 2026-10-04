@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Are the FACE and the TAG both visible at once? Run before an eyetag calibration.
+
+`--mode eyetag` needs two signals in the same frame: the face mesh for the
+irises, and the ArUco tag for head pose. Either one alone is useless to it,
+and the failure mode is nasty -- calibration collects nothing, reports the
+points as unstable, and blames the head. Exactly the shape of the dark-room
+failure, with one more way to go wrong.
+
+The specific risk this exists to catch: the tag is mounted on glasses, so it
+sits near the eyes. Close enough and it occludes an iris, and then every
+frame has a tag and no face. That is invisible to `bin/tagcheck`, which only
+looks for the tag.
+
+Reports the JOINT rate, because that is what the mode actually consumes:
+
+  face only   -- tag not found; nothing to swap in
+  tag only    -- the occlusion case, or the face is lost for its own reasons
+  BOTH        -- the only frames eyetag can use
+
+Usage:  bin/eyetagcheck [--seconds 15] [--tag-id 2]
+"""
+import argparse
+import os
+import sys
+import time
+
+import cv2
+import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from spike import backends, camera, config, features, tagtrack
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--seconds", type=float, default=15.0)
+    ap.add_argument("--tag-id", type=int, default=tagtrack.DEFAULT_TAG_ID)
+    args = ap.parse_args()
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = config.load(os.path.join(root, "config.toml"))
+    c = cfg["camera"]
+    cam = camera.Camera(c["device"], c["width"], c["height"], c["fps"],
+                        c["fourcc"], c["exposure"], c["focus"], c["gain"]).open()
+    be = backends.create(prefer=cfg["inference"]["backend"])
+    tr = tagtrack.TagTracker(args.tag_id)
+    blink_thr = cfg["inference"]["blink_ear_threshold"]
+
+    print("looking for a FACE and tag id %d together for %.0f s -- "
+          "wear the tag, face the camera, keep your eyes clear"
+          % (args.tag_id, args.seconds))
+
+    n = both = face_only = tag_only = neither = blinks = 0
+    tag_xy = []
+    t0 = time.perf_counter()
+    while time.perf_counter() - t0 < args.seconds:
+        frame = cam.read()
+        if frame is None:
+            continue
+        n += 1
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        hit = tr.find(gray)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        res = be.detect(rgb)
+        has_face = False
+        if res.ok:
+            try:
+                _, diag = features.extract(res.landmarks, rgb.shape[1],
+                                           rgb.shape[0])
+                if features.is_blinking(diag, blink_thr):
+                    blinks += 1
+                else:
+                    has_face = True
+            except Exception:
+                pass
+        if hit is not None:
+            tag_xy.append(hit[0])
+        if has_face and hit is not None:
+            both += 1
+        elif has_face:
+            face_only += 1
+        elif hit is not None:
+            tag_only += 1
+        else:
+            neither += 1
+    el = time.perf_counter() - t0
+    cam.close()
+    if not n:
+        print("no frames from the camera")
+        return 2
+
+    pct = lambda v: 100.0 * v / n
+    print("\nframes %d in %.1f s -> %.1f fps" % (n, el, n / el))
+    print("  BOTH face and tag : %4d  (%3.0f%%)   <- what eyetag consumes" % (both, pct(both)))
+    print("  face only, no tag : %4d  (%3.0f%%)" % (face_only, pct(face_only)))
+    print("  tag only, no face : %4d  (%3.0f%%)   <- occlusion suspect" % (tag_only, pct(tag_only)))
+    print("  neither           : %4d  (%3.0f%%)" % (neither, pct(neither)))
+    print("  blinks skipped    : %4d" % blinks)
+    if tag_xy:
+        a = np.asarray(tag_xy)
+        print("  tag centre wandered %.0f x %.0f px while you held still"
+              % (np.ptp(a[:, 0]), np.ptp(a[:, 1])))
+
+    ok = True
+    if pct(both) < 80:
+        ok = False
+        if tag_only > face_only:
+            print("\nTHE TAG IS WINNING AND THE FACE IS NOT. The tag may be "
+                  "occluding an eye, or sitting where it shadows one. Move it "
+                  "further from the eye line and run this again.")
+        elif face_only > tag_only:
+            print("\nTHE FACE IS THERE AND THE TAG IS NOT. Check the tag id, "
+                  "the lights, and that the tag is flat and unglared.")
+        else:
+            print("\nBOTH SIGNALS ARE INTERMITTENT. Lighting first -- a dark "
+                  "room reads as every other failure.")
+    print("\n%s" % ("READY for an eyetag calibration."
+                    if ok else "NOT ready -- fix the above first."))
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
