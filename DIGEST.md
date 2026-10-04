@@ -313,9 +313,9 @@ It also separates two things the first version conflated: **scatter**
 (steadiness, which light improves) from **offset** (accuracy, which
 calibration improves).
 
-## Proxies trusted past their range — twice
+## Proxies trusted past their range — three times now
 
-Both cost real time, and both look like success:
+All three cost real time, and all three look like success:
 
 - **Camera `gain` is a light meter only below its ceiling.** It read 109 in
   all four lighting conditions while face brightness varied 5.6× and iris
@@ -323,6 +323,11 @@ Both cost real time, and both look like success:
   discarded a lamp that was plainly working.
 - **Face brightness does not predict detection.** Face mean spanned 91–152
   while rim pose ranged 48–84% with no ordering between them.
+- **Whole-frame mean cannot see a lamp aimed at a head.** A tag-detection
+  trial read 1% / 80% / 80% on the same dark screen and was called "the
+  camera settling", citing frame mean barely moving (13.9 → 17.2) as proof
+  that light was not the variable. The room lights had been switched on
+  mid-trial.
 
 The metric that does predict it is **iris contrast** — the edge the landmark
 model actually localises. Room light alone 7.70, room plus lamp 15.11.
@@ -411,7 +416,7 @@ DICT_4X4_50 tag drives the same 3x2 AAC board through the same dwell.
 | detection | **100%**, 7.1 px per cell at 1280x720 |
 | lost during use | **0 of 359 frames** |
 | calibration | 5 of 5 points, RMS **0.0359 of screen** |
-| fps | 17.3 (camera alone 19.0 -- detection costs 0.9) |
+| fps | 17.3 (camera alone 19.0; both BEFORE the buffer fix below) |
 | reachable field | **102 px horizontal, 37 px vertical** |
 
 Subject's assessment: **"dead on."**
@@ -496,34 +501,34 @@ the C920 offers only YUYV and MJPG here.
 
 ## Open
 
-1. Repeat Gate 1c in good light — the 3.27° run was dim (face 55.4 vs 128.7).
-2. The window/backlit test. Needs daylight.
-3. Yaw from the **mean axis ratio** of the two coplanar rims — the one untried
-   idea with an argument behind it, and worth ~2° of systematic bias to escape
-   19° of noise.
-4. Make linear the spike's default too (the game already switched); it needs
-   its own fresh run rather than a refit.
-5. ~~Measure fixation noise~~ **DONE** — and it needed the protocol rebuilt
-   first. Per-fixation scatter is now 1.65 deg with the lamp. The
-   jitter-vs-drift question is partly answered: within a fixation the signal
-   is usable, and the slow component that dominated the old measurement was
-   the subject, not the tracker.
-6. **Chase the 7.2 Hz.** The full pipeline ran at less than half the
-   documented 18-25 fps all evening even on the `performance` governor, with
-   the camera alone managing 19.4. Unexplained, and it makes every
-   measurement noisier than it needs to be.
-7. `bin/talker` hardcodes the screen size from config; it should read the
-   actual display, so a board that comes up at 1024x768 is not drawn broken.
-8. Repeat the 3.27 deg accuracy run in good light. The schedule still rests on
-   one dim-light run sitting 0.23 deg inside a decision boundary.
-9. ~~Analyse the faire data~~ **PARTLY DONE** — per-day, per-visitor and
-   hourly cuts are in `RESULTS.md`. Still open: learning *within* a session
-   (does a visitor improve over their 12 throws?), and what distinguishes the
-   13 visitors who got nothing from the rest. That second one is the highest
-   value question left in this dataset.
-10. **Ship a heartbeat.** A third of the exhibition recorded nothing and
-   nobody noticed until three days later. Anything that writes a line per
-   minute, visible on the kiosk, would have caught it.
-11. **Find the crashes** — and fix the clock first, because without a
-   battery-backed RTC or an NTP-at-boot guarantee you cannot tell when
-   anything happened. Power is the first suspect for the crashes themselves.
+1. **Run `--mode eyetag` against a real face.** Built, never tried. The tag's
+   position replaces the face mesh's yaw/pitch as the head-pose feature -- a
+   swap, not an addition, so a win is the signal and not extra capacity. If
+   it works it is most of what a second camera would buy.
+2. **Measure two simultaneous camera captures** before ordering the dual-CSI
+   board. The landmark model alone is 46.6 ms; the budget is the risk.
+3. **Try Vulkan via turnip** (ncnn or MNN) for the landmark model. It is the
+   only GPU path left after rusticl measured 0.54x the CPU.
+4. **A controlled head-vs-eye A/B** -- same targets, duration, alternating.
+5. Repeat Gate 1c in good light; the 3.27 deg run was dim (face 55.4 vs
+   128.7) and sits 0.23 deg inside a decision boundary.
+6. The window/backlit test. Needs daylight. Still the one condition a faire
+   presents and the only one untested.
+7. ~~Chase the 7.2 Hz~~ **LARGELY EXPLAINED 2026-10-03.** Two causes, both
+   mundane: the CPU governor reverts to `schedutil` on every boot, and
+   `CAP_PROP_BUFFERSIZE` was 1, which halved the camera rate. 19.0 -> 29.9
+   fps from the buffer alone. What remains is the landmark model's 46.6 ms,
+   which is not a mystery, just a cost.
+8. Learning *within* a faire session -- does a visitor improve over 12
+   throws? And what separates the 13 who got nothing. Highest-value question
+   left in the dataset.
+9. **Ship a heartbeat.** A third of the exhibition recorded nothing and
+   nobody noticed for three days.
+10. **Find the crashes** -- and fix the clock first, because without a
+   battery-backed RTC you cannot tell when anything happened.
+11. Reconcile three claims in the published article against the measurements:
+   50-70 cm (measured band is 50-65), a 4x2 grid (the gaze build is 3x2),
+   and head tracking dated 27 Sep (built 30 Sep).
+12. Make linear the spike's default too; the game already switched.
+13. Yaw from the **mean axis ratio** of the two coplanar rims -- the one
+   untried rim idea with an argument behind it.
