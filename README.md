@@ -11,6 +11,19 @@ deadlines.
 
 ## What it looks like
 
+![Face mesh and ArUco tag in the same frame](docs/subject_with_tag_and_mesh.png)
+
+**Two signals, one frame.** The magenta points are the iris landmarks that
+give *gaze*; the yellow square is a `DICT_4X4_50` tag on the brow that gives
+*head pose*. The gaze model already carries a head-pose feature — yaw and
+pitch from the face mesh — but those are derived from the same landmarks that
+fail when the head turns, so the signal dies exactly when it is needed. The
+tag does not. `--mode eyetag` swaps one for the other: same six features,
+same seven parameters, so a win is the signal and not extra model capacity.
+
+(Background destroyed by `tools/deidentify.py`; see **Data, images and
+privacy**.)
+
 ![Head pointing with an ArUco tag](docs/talker_head_pointing.png)
 
 **Head pointing.** A printed ArUco tag on the glasses drives the same AAC

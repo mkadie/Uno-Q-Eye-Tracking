@@ -19,6 +19,16 @@ Three rules, in order:
      A Gaussian alone is partly invertible; throwing the pixels away is not.
 
 Run: python3 tools/deidentify.py board_artifacts/*.png
+
+**THIS CANNOT RUN ON THE UNO Q.** It imports MediaPipe for the landmarker,
+and MediaPipe's aarch64 wheel is built with ARMv8.1 LSE atomics while the
+QRB2210 is ARMv8.0 -- it dies with "compiled with lse enabled, but this
+feature is not available on this processor". Capture on the board, copy the
+frame off, de-identify here. MEASURED the hard way 2026-10-04.
+
+**AND ORDER MATTERS: de-identify BEFORE drawing anything on the frame.** The
+landmarker has to find the face, and it cannot once a mesh is drawn over it
+-- doing it the other way round reports NO FACE and wipes the whole image.
 """
 import os
 import sys
