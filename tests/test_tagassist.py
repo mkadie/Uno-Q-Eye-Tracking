@@ -78,3 +78,32 @@ def test_it_is_a_linear_mapper_so_it_inherits_the_standardising():
     """Ridge on RAW columns crushes this fit -- iris features are ~0.01 while
     the screen is ~1900 px. Inheriting LinearMapper is what keeps that fix."""
     assert issubclass(calib.TagAssistedMapper, calib.LinearMapper)
+
+
+def test_collect_point_has_a_deadline():
+    """It used to have none, and a missing signal hung calibration forever.
+
+    MEASURED 2026-10-04: adding the tag requirement meant a frame without a
+    tag was `continue`d, and the loop only exited on 'enough samples'. Point
+    one spun at 165% CPU with nothing on stdout. A calibration that cannot
+    finish must say so.
+    """
+    import inspect
+    from spike import targets
+    src = inspect.getsource(targets.collect_point)
+    assert "deadline" in src, "collect_point must bound its own loop"
+    assert "timed out" in src, "a timeout must report itself"
+    assert "no_tag" in src, "and say which signal was missing"
+
+
+def test_a_nearly_complete_point_is_accepted_not_discarded():
+    """26 of 30 samples threw away a whole 9-point calibration.
+
+    A median over half the samples is a good point; a point with almost
+    nothing is not. Only the latter should fail.
+    """
+    import inspect
+    from spike import targets
+    src = inspect.getsource(targets.collect_point)
+    assert "enough = max(8, n // 2)" in src
+    assert "accepted on time" in src

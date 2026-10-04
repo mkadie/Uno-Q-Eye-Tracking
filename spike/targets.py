@@ -101,8 +101,35 @@ def collect_point(cam, be, cfg, canvas, pt, label, tracker=None):
 
     t0 = time.perf_counter()
     feats = []
+    # A PER-POINT DEADLINE, because this loop used to have none. It exited
+    # only on "enough samples", so any frame rejected for a missing signal
+    # simply went round again -- and when the tag requirement was added,
+    # a lost tag hung calibration at point one, forever, at 165% CPU with
+    # nothing on stdout. MEASURED 2026-10-04. A calibration that cannot
+    # finish must SAY SO, and say which signal was missing.
+    deadline = settle + max(6.0, 4.0 * settle)
+    why = {"no_face": 0, "no_tag": 0, "blink": 0, "no_frame": 0}
     while True:
         el = time.perf_counter() - t0
+        if el > deadline:
+            # ENOUGH IS ENOUGH, not all-or-nothing. MEASURED 2026-10-04: a
+            # point reached 26 of 30 samples and the whole 9-point
+            # calibration was thrown away for the missing 4. A median over
+            # 18 good samples is a perfectly good point; what is NOT good is
+            # a point with almost nothing, and only that should fail.
+            #
+            # The rate drops during calibration because the subject is
+            # looking AT dots rather than at the camera, so whichever signal
+            # depends on facing it gets scarcer exactly here.
+            enough = max(8, n // 2)
+            miss = max(why, key=why.get)
+            if len(feats) >= enough:
+                print("  point accepted on time (%d/%d samples, %s scarce)"
+                      % (len(feats), n, miss))
+                break
+            print("  point timed out after %.1fs with %d/%d samples "
+                  "(mostly %s)" % (el, len(feats), n, miss))
+            return None
         phase = min(1.0, el / settle) if el < settle else 1.0
         draw_target(canvas, pt, phase, label)
         cv2.imshow(WIN, canvas)
@@ -111,6 +138,7 @@ def collect_point(cam, be, cfg, canvas, pt, label, tracker=None):
 
         frame = cam.read()
         if frame is None:
+            why["no_frame"] += 1
             continue
         h, w = frame.shape[:2]
         s = float(size) / max(h, w)
@@ -123,6 +151,7 @@ def collect_point(cam, be, cfg, canvas, pt, label, tracker=None):
         full_rgb = None if s >= 1 else cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         res = be.detect(rgb, full=full_rgb)
         if not res.ok:
+            why["no_face"] += 1
             continue
         try:
             feat, diag = features.extract(res.landmarks, rgb.shape[1],
@@ -132,10 +161,12 @@ def collect_point(cam, be, cfg, canvas, pt, label, tracker=None):
         # Blink frames carry garbage iris landmarks. Including them in a
         # calibration average poisons that whole grid point.
         if features.is_blinking(diag, blink_thr):
+            why["blink"] += 1
             continue
         if tracker is not None:
             hit = tracker.find(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
             if hit is None:
+                why["no_tag"] += 1
                 continue
             # Normalised by frame size so a calibration survives a
             # resolution change, exactly like every other feature here.

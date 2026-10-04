@@ -203,8 +203,27 @@ class TagAssistedMapper(LinearMapper):
     model was handed more capacity to fit with. An extra pair of columns
     would have confounded exactly the thing being measured.
 
-    UNMEASURED at the time of writing. If it works it is most of what a
-    second camera would buy, on hardware already on the desk.
+    MEASURED 2026-10-04 AND IT DOES NOT WORK. Controlled A/B against the
+    plain LinearMapper, same subject and lighting, back to back: the trail
+    while a cell was locked went from 1464x906 px to 1897x1079, and **42% of
+    frames had a trail spanning the whole screen**. Zero frames settled
+    under 800 px. Selections nearly tripled, which sounds good and is not --
+    a cursor sweeping across cells completes dwells on the way past, so that
+    number is the Midas touch.
+
+    WHY, and this is reasoning rather than measurement: `yaw` and `pitch`
+    are ANGLES; the tag's `x` and `y` are a POSITION. A 2-D centroid cannot
+    tell a head that TRANSLATED from one that ROTATED -- lean without
+    turning and it sweeps while the gaze does not move; turn without leaning
+    and it barely moves while the gaze target changes entirely. The model
+    gets one number for two opposite situations.
+
+    **The right experiment is the tag's POSE, not its position.** One ArUco
+    marker of known size plus calibrated intrinsics gives 6-DoF from
+    solvePnP on its four corners, and both halves are already here: 27 mm
+    tag, intrinsics at RMS 0.306 px. That returns real yaw and pitch from a
+    marker `bin/headrange` found at 100% across a 3x3 map. This class kept
+    the centroid and threw the orientation away.
     """
 
     COLS = (0, 1, 2, 3, LinearMapper.TAG_X, LinearMapper.TAG_Y)

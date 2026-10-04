@@ -1,3 +1,77 @@
+# eyetag: a NEGATIVE result, and why the experiment was mis-designed
+
+2026-10-04. Controlled A/B, same subject, same board, same lighting, same
+1.2 s dwell, back to back, eye first.
+
+| | eye (face-mesh pose) | eyetag (tag position) |
+|---|---|---|
+| frames | 838 | 690 |
+| cell locked | 71% | 75% |
+| selections / 100 frames | 3.7 | **9.9** |
+| median trail while locked | **1464 x 906 px** | **1897 x 1079 px** |
+| frames whose trail spans the WHOLE screen | -- | **42%** |
+| frames with a locked cell AND a trail < 800 px | -- | **0** |
+
+**eyetag was worse, and the one metric that looks better is the worst sign
+of all.** 1919 x 1079 is the entire screen. The cursor was sweeping across
+everything, and a point flying over cells with `--hold 3` commits them and
+completes dwells on the way past. **The 166% rise in selections is the Midas
+touch, not control** -- words fired that nobody chose. Zero frames settled.
+
+## Why it failed: position is not orientation
+
+REASONING, not measurement, but it is specific and testable.
+
+`TagAssistedMapper` swapped the face mesh's `yaw` and `pitch` -- which are
+**ANGLES** -- for the tag's `x` and `y` -- which are a **POSITION in the
+image**. Those are not the same kind of quantity, and the substitution
+quietly threw away the thing the model actually needed.
+
+A 2-D tag centre **cannot distinguish a head that TRANSLATED from a head
+that ROTATED.** Lean left without turning and the tag sweeps across the
+image while the eyes keep looking at the same place. Turn left without
+leaning and the tag barely moves while the gaze target changes completely.
+The two cases have nearly opposite implications for where the gaze lands,
+and the feature gives the model the same number for both.
+
+The face mesh's yaw/pitch, for all that they degrade past 20 degrees, are at
+least the right *kind* of signal.
+
+## The experiment that should have been run
+
+**Use the tag's POSE, not its position.** A single ArUco marker with a known
+physical size and calibrated intrinsics gives full 6-DoF through
+`cv2.solvePnP` on its four corners -- and both halves are already in this
+repo: the tag is **27 mm** (`head_track.md`) and
+`camera_intrinsics.json` is calibrated to RMS 0.306 px.
+
+That yields real head yaw and pitch: the same quantity the model wants,
+from a rigid marker that `bin/headrange` found at **100% across a 3x3 map
+with skew never above 0.04** -- where the face mesh's own estimate collapses
+past 20 degrees. The skew that `headrange` already measures IS the
+orientation signal, and this code threw it away and kept only the centroid.
+
+**Caveats on this run, which make it a weak test rather than a clean
+refutation:**
+
+- The tag signal was degraded: **79% joint rate** at the pre-flight check
+  against 99% earlier in the day, and two calibration points completed only
+  on the deadline with `no_tag scarce`. The head feature was thin exactly
+  where it mattered.
+- One subject, one sitting.
+
+So: the swap as built does not work, and there is a concrete reason to think
+the right swap was never tried.
+
+## What the A/B was worth anyway
+
+The protocol held. Two nine-point calibrations and two minutes of use, same
+conditions, back to back, produced a clear answer in under ten minutes --
+which is what the earlier head-vs-eye "comparison" could not do, because
+those were two sessions at different tasks. **The trail-spread-while-locked
+metric is the one that discriminated**; cell-lock rate and selection count
+both pointed the wrong way.
+
 # The published article, checked against the measurements, 2026-10-03
 
 <https://www.digikey.com/en/maker/projects/eye-tracking-for-special-needs-with-uno-q-unoqdreamlab/40da686f404244749e2e62fe5d30972a>
