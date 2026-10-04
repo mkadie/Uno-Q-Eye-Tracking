@@ -141,6 +141,7 @@ class LinearMapper(object):
         self._W = None
         self._mu = None
         self._sd = None
+        self.dead_cols = []
 
     @property
     def fitted(self):
@@ -161,14 +162,68 @@ class LinearMapper(object):
         Standardising makes the penalty mean the same thing for every column.
         See _moments() below; this module learned it the same way, twice.
         """
-        Z = (self._raw(X) - self._mu) / self._sd
+        R = self._raw(X).copy()
+        if getattr(self, "dead_cols", None):
+            for c in self.dead_cols:
+                i = list(self.COLS).index(c)
+                R[:, i] = self._mu[i]      # freeze it at its calibration mean
+        Z = (R - self._mu) / self._sd
         return np.hstack([np.ones((len(Z), 1)), Z])
+
+    # A feature that barely moved during calibration must be DISABLED, not
+    # standardised. MEASURED 2026-10-04 and it is the whole reason the tag
+    # experiments failed: a gaze calibration tells the subject to hold their
+    # head STILL, so a rigid head-pose feature has almost no variance across
+    # the nine points. Standardising then divides by that tiny sd, which
+    # AMPLIFIES its noise before the ridge penalty ever sees it, and the
+    # fitted coefficient becomes enormous.
+    #
+    # Measured, synthetic 9-point fit, asking how far one degree of head
+    # wobble moves the cursor at use time:
+    #
+    #     column sd 9.94 deg ->     2 px
+    #     column sd 1.80 deg ->     3 px
+    #     column sd 0.19 deg ->     5 px
+    #     column sd 0.02 deg ->  1290 px     <- most of a 1920 px screen
+    #
+    # The old guard only caught sd < 1e-9, which is a column that is exactly
+    # constant. The dangerous case is a column that is ALMOST constant: it
+    # passes the guard, gets amplified, and produces a cursor that sweeps.
+    # Thresholds are PER COLUMN because the units differ: an sd of 0.02 is
+    # negligible for an angle in degrees and is real signal for a normalised
+    # iris coordinate. One number cannot serve both.
+    #
+    # Only the tag columns are guarded. The eye model's own columns are left
+    # exactly as they were -- it is the validated path and this is not the
+    # moment to change its behaviour.
+    MIN_FEATURE_SD = 1e-9              # the old catch-all: exactly constant
+    MIN_SD_BY_COL = {12: 0.5,          # tag yaw, degrees
+                     13: 0.5,          # tag pitch, degrees
+                     14: 2.0}          # tag distance, mm
+
+    def _min_sd(self, col):
+        return self.MIN_SD_BY_COL.get(int(col), self.MIN_FEATURE_SD)
 
     def fit(self, X, y):
         R = self._raw(X)
         self._mu = R.mean(axis=0)
         sd = R.std(axis=0)
-        sd[sd < 1e-9] = 1.0            # a constant column carries no signal
+        self.dead_cols = [int(self.COLS[i]) for i in range(len(sd))
+                          if sd[i] < self._min_sd(self.COLS[i])]
+        if self.dead_cols:
+            det = ", ".join("col %d sd %.3f < %.3f" % (
+                c, sd[list(self.COLS).index(c)], self._min_sd(c))
+                for c in self.dead_cols)
+            print("  calibration: DISABLED near-constant feature(s) -- %s. "
+                  "The head barely moved, so standardising would amplify "
+                  "that column's noise and make the cursor sweep." % det)
+        # Neutralise rather than amplify: centre stays, scale becomes 1, and
+        # the column is now all-zeros so its coefficient cannot do damage.
+        R = R.copy()
+        for i in range(len(sd)):
+            if sd[i] < self._min_sd(self.COLS[i]):
+                R[:, i] = self._mu[i]
+                sd[i] = 1.0
         self._sd = sd
         P = self._design(X)
         Y = np.asarray(y, dtype=np.float64)

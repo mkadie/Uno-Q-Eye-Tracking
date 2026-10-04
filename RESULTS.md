@@ -1,3 +1,112 @@
+# Both tag experiments failed, and the reason is the calibration protocol
+
+2026-10-04. Three modes, same subject, same board, same 1.2 s dwell.
+
+| | frames | cell locked | trail while locked | whole-screen sweeps | **settled frames** |
+|---|---|---|---|---|---|
+| **EYE** (face-mesh yaw/pitch) | 838 | **71%** | **1464 x 906 px** | **40%** | **26%** |
+| EYETAG (tag x,y) | 690 | 75% | 1897 x 1079 | 42% | **0%** |
+| EYEPOSE (tag yaw/pitch, solvePnP) | 251 | 58% | 1919 x 1079 | 62% | **0%** |
+
+"Settled" = a locked cell and a trail under 800 px wide. **Only the eye
+baseline ever settles.** Neither tag variant managed it once.
+
+**EYEPOSE had the BEST input conditions of the three** -- 100% joint
+face+tag rate, white light, the tag steady to 3 x 2 px -- and came last.
+That is the strongest single argument that the problem is not signal
+quality.
+
+## The mechanism: a gaze calibration tells you to hold your head still
+
+Synthetic 9-point fit, varying only how much the head-pose column moved
+during calibration, then asking how far ONE DEGREE of head wobble moves the
+cursor at use time:
+
+| head variance during calibration | cursor movement per degree |
+|---|---|
+| 10 deg | 2 px |
+| 2 deg | 3 px |
+| 0.2 deg | 5 px |
+| **0.02 deg** | **1290 px** |
+
+A 1920 px screen. **The feature is structurally starved of variance**,
+because the calibration protocol explicitly asks the subject not to move
+their head, and then standardising divides by that tiny sd and amplifies
+the column's noise before ridge ever sees it.
+
+**Why the face mesh's yaw/pitch survive the same protocol:** they are
+derived from the same landmarks as the irises, so they co-vary with the
+iris features and carry real signal. **The tag is rigid and genuinely
+still -- which makes it a better pose estimate and a worse regressor.** An
+independent, more accurate measurement is not automatically a more useful
+feature.
+
+## What was fixed
+
+`LinearMapper` now DISABLES a near-constant feature instead of amplifying
+it: the column is frozen at its calibration mean and its coefficient cannot
+do damage. Thresholds are **per column** because the units differ -- an sd
+of 0.02 is negligible for an angle in degrees and is real signal for a
+normalised iris coordinate; one number cannot serve both. **Only the tag
+columns are guarded**; the eye model's own columns are untouched, because
+it is the validated path.
+
+## What would have to change for a head feature to work
+
+Not a better sensor. **A different calibration protocol** -- one that asks
+the subject to move their head between points, so the column has variance
+to carry signal. That is a real cost at a faire, where the whole argument
+for the 9-point grid is that it fits in a queue.
+
+## Honest limits of this comparison
+
+**The three runs were NOT under identical conditions**, and that is a real
+caveat rather than a footnote:
+
+- EYE: regular glasses, no white light, camera higher.
+- EYETAG: 79% joint rate, two calibration points thin on tag samples.
+- EYEPOSE: round glasses, white light added, camera lowered, 100% joint.
+
+So this is not a clean three-way. What survives the confound is the
+settled-frame count -- 26% against 0% and 0% -- and the mechanism above,
+which is measured on synthetic data where nothing is confounded.
+
+## Two traps found on the way, both worth keeping
+
+**SOLVEPNP_IPPE_SQUARE ignores your point ordering.** It assumes OpenCV's
+canonical square, TL/TR/BR/BL with +y UP. Passing the repo's usual y-down
+ordering gave **2608 px of reprojection error** -- complete garbage, easy to
+blame on the tag or the intrinsics.
+
+**solvePnP can return ok=True with a nan pose.** At yaw -25 deg and 600 mm,
+where the tag is ~41 px across -- the normal working distance --
+IPPE_SQUARE reported success and handed back a nan rvec. +25 deg was fine,
+which is how it would have gone unnoticed. Every solve is now checked for
+finiteness and reprojection, with a fallback solver.
+
+## And the red lamp breaks face detection when it saturates
+
+MEASURED on one captured frame, face region at R 62.2 / G 17.5 / B 27.9:
+
+| input to the detector | result |
+|---|---|
+| as captured | no face |
+| x2 brightness | **no face** |
+| x3.5 brightness | **no face** |
+| **grayscale** | **FACE FOUND** |
+| CLAHE on L | FACE FOUND |
+
+**Brightening does nothing; removing the colour cast fixes it.** The joint
+face+tag rate was 14%, and the tag read 86% because black-and-white
+geometry does not care about a colour cast. Adding white light took it to
+**100%**.
+
+So the lamp that is worth **3.2x steadier gaze** also **breaks the face
+detector once it saturates the face**. The obvious fix -- feed the detector
+a grayscale image -- was deliberately NOT applied today, because changing
+the instrument mid-experiment would have confounded the comparison. It is
+the first thing to try next.
+
 # eyetag: a NEGATIVE result, and why the experiment was mis-designed
 
 2026-10-04. Controlled A/B, same subject, same board, same lighting, same

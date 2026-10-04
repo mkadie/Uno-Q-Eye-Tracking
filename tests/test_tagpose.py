@@ -103,3 +103,43 @@ def test_a_nan_pose_never_escapes():
 def test_garbage_corners_return_None_not_a_confident_pose():
     degenerate = np.array([[100.0, 100.0]] * 4)   # all four corners identical
     assert tagtrack.pose_from_corners(degenerate, K, ZERO) is None
+
+
+def test_a_near_constant_feature_is_disabled_not_amplified():
+    """The mechanism behind both failed tag experiments.
+
+    A gaze calibration tells the subject to hold their head STILL, so a
+    rigid head-pose feature barely varies. Standardising divides by that
+    tiny sd and amplifies its noise; MEASURED, a column with sd 0.02 deg
+    turned one degree of head wobble into 1290 px of cursor movement.
+    """
+    rng = np.random.default_rng(5)
+    N = 9
+    iris = rng.normal(size=(N, 4)) * 0.03
+    y = np.column_stack([960 + 20000*iris[:, 0], 540 + 12000*iris[:, 1]])
+    X = np.zeros((N, 15))
+    X[:, 0:4] = iris
+    X[:, 12] = 7.0 + rng.normal(scale=0.02, size=N)   # head held still
+    X[:, 13] = -2.0 + rng.normal(scale=0.02, size=N)
+    m = calib.TagPoseMapper().fit(X, y)
+    assert calib.LinearMapper.TAG_YAW in m.dead_cols
+    assert calib.LinearMapper.TAG_PITCH in m.dead_cols
+    # and a wobble must now barely move the cursor
+    probe = X[0].copy()
+    base = np.asarray(m.predict(probe))
+    probe[12] += 1.0
+    assert np.linalg.norm(np.asarray(m.predict(probe)) - base) < 50.0
+
+
+def test_a_feature_that_DID_vary_is_kept():
+    rng = np.random.default_rng(6)
+    N = 9
+    iris = rng.normal(size=(N, 4)) * 0.03
+    X = np.zeros((N, 15))
+    X[:, 0:4] = iris
+    X[:, 12] = rng.normal(scale=8.0, size=N)
+    X[:, 13] = rng.normal(scale=8.0, size=N)
+    y = np.column_stack([960 + 20000*iris[:, 0] + 30*X[:, 12],
+                         540 + 12000*iris[:, 1] + 20*X[:, 13]])
+    m = calib.TagPoseMapper().fit(X, y)
+    assert m.dead_cols == []
