@@ -11,8 +11,8 @@ Dream Lab, #UNOQDreamLab on maker.io). It is deliberately **not** a working eye
 tracker — it exists to produce three numbers (fps, angular error, implied
 target size) that decide the rest of the design.
 
-Hardware: UNO Q 4GB (QRB2210, 4x Cortex-A53 @ 2.0 GHz, Adreno GPU, **no NPU** —
-inference is CPU-bound). Logitech C920x on USB. A separate CircuitPython board
+Hardware: UNO Q 4GB (QRB2210, 4x Cortex-A53 @ 2.0 GHz, **Adreno 702 GPU**,
+**no NPU**). Logitech C920x on USB. A separate CircuitPython board
 does breath sensing over I2C and is the USB HID endpoint.
 
 ## Run order — each gates the next
@@ -281,6 +281,66 @@ runtime; do not hardcode either form. And **turn on
 corners to whole pixels and throw away most of the precision the rig exists to
 provide.
 <!-- END camera-intrinsics -->
+
+
+**No NPU, but there IS a GPU and it already has drivers.** CHECKED against
+Qualcomm's own product brief 2026-10-03, because "inference is CPU-bound"
+used to be written here as though it were a hardware fact. It is a choice.
+
+- **There is no NPU.** The brief lists "AI Performance: Hexagon Processor,
+  Adreno 702" and says inference runs "on-device ... **via CPU and GPU**".
+  The Hexagon on this part is the **always-on sensor/audio DSP**, not a
+  tensor accelerator -- no HVX/HMX, no TOPS figure. On this board it is not
+  even exposed to userspace: **no `/dev/fastrpc*`, `/dev/adsprpc`, or
+  `/dev/cdsprpc`**, and no QNN or SNPE runtime anywhere. There is no driver
+  to fix; there is no path at all without Qualcomm's proprietary stack.
+- **The GPU is real and working.** `/dev/dri/renderD128`, `msm_dpu` with
+  `a702_sqe.fw` loaded, Mesa 25.2.6. **OpenCL 3.0 via rusticl** (`clinfo`
+  reports device `FD702`, 844 MHz, fp16 yes, fp64 no, **1 compute unit**)
+  and **Vulkan via turnip** (`Turnip Adreno (TM) 702`). OpenCV is even built
+  with OpenCL and reports `useOpenCL: True`.
+
+**BUT DO NOT GO AND PUT THE NEURAL NET ON IT.** MEASURED 2026-10-03, on the
+`performance` governor:
+
+| stage | per frame |
+|---|---|
+| USB grab, no decode | **37.8 ms** (26.4 fps) |
+| **MJPEG decode** | **28.9 ms** |
+| face-mesh inference | **10.7 ms** (93.6 fps alone) |
+
+**Inference is the cheapest part of the pipeline.** Decode costs 3x what it
+does. Moving the net to the GPU is optimising the 10.7 ms and leaving the
+28.9 alone.
+
+**The frame rate is QUANTISED, and that is the whole story.** `read()`
+measures **66.7 ms** -- exactly 2 x the camera's 33.3 ms frame interval.
+Decode (28.9) plus inference (10.7) is 39.6 ms, about **6 ms over budget**,
+so every frame misses its slot and waits for the next one. Throughput halves
+to 15 fps. **Get total per-frame work under 33 ms and the rate roughly
+doubles**; shaving 6 ms is worth more than any amount of GPU work.
+
+**Venus cannot help.** `/dev/video3` is a real hardware video decoder but it
+accepts **H264, VP9, HEVC only** -- not MJPEG. And the C920 on this kernel
+offers only YUYV and MJPG, so there is no H.264 stream to hand it.
+
+**YUYV is a real alternative at 640x480 and a trap at 720p.** MEASURED:
+
+| format | grab | read | decode/convert |
+|---|---|---|---|
+| MJPG 1280x720 | 37.8 ms | 66.7 ms (15.0 fps) | 28.9 ms |
+| YUYV 1280x720 | 100.1 ms | 100.3 ms (**10.0 fps**) | 0.3 ms |
+| MJPG 640x480 | 38.8 ms | 66.9 ms (14.9 fps) | 28.1 ms |
+| YUYV 640x480 | 46.8 ms | 47.6 ms (**21.0 fps**) | 0.8 ms |
+
+720p YUYV advertises 30 fps in its descriptor and delivers **10** -- USB 2.0
+cannot carry 55 MB/s, so believe the measurement and not the descriptor. At
+640x480 YUYV beats MJPEG outright, 21.0 fps against 14.9, and hands back
+27 ms of CPU.
+
+**The GPU governor was never pinned.** `/sys/class/devfreq/5900000.gpu` runs
+`simple_ondemand` and idles at **355 MHz of 844**. Only the CPU governor was
+ever set. If the GPU is ever used for anything, pin this too.
 
 ## Conventions
 
