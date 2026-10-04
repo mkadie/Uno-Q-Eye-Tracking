@@ -761,22 +761,29 @@ Try both; they are different images and the landmark model may prefer either.
    2026-09-19 bare-faced run gave `r_y = 0.755` vs `r_x = 0.563`, which
    reverses it. **Re-measure before acting on either number.**
 6. Bare-face-mesh column of update.md's ladder table — never run.
-7. Re-upload `DIGEST.md` to Drive / the claude.ai Project after any of the
-   above lands. It is a snapshot, not a link. **Current: 2026-09-29**, Drive
-   id `1hmITrRAye9SEDZUzc4vJG6_IosblVOpa`, in the `claude/sip-n-puff/unoq`
-   folder (`14dd62Ji4FD4DmqHKwKH1Gudv-42MTLsO`). Superseded snapshots go to
-   `unoq-gaze-spike ARCHIVE` (`1aWFUXOeGpNTzXl0Z_753VCpgFIlam_Ry`), renamed
-   `SUPERSEDED <date> ... (do not use as current)` -- 09-21, 09-23 and 09-29
-   are all there. **Current Drive set, in `claude/sip-n-puff/unoq`:**
-   `unoq-gaze-spike-DIGEST-2026-09-30.md` (id
-   `16wXqKmXf63I4N1qgZqkShE9U7AG5CKNO`) and
-   `unoq-gaze-spike-WRITEUP-NOTES-2026-09-30.md` (id
-   `1TOO6i8WYOA8-qHmDs8ILlCzawigRacFT`). Figures, the 1.7 MB study data and
-   the full RESULTS.md are NOT copied to Drive on purpose -- they live in the
-   public repo, versioned and always current, where a Drive snapshot would go
-   stale. The write-up notes link to them. The measurement report is a Claude Doc, not Drive:
-   https://claude.ai/artifact/DZrdz44qiA5NHy175mNJed -- it carries the faire
-   section and is updated alongside this file.
+7. **Drive sync, both directions.** Last done 2026-10-03.
+
+   **Current Drive set**, in `claude/sip-n-puff/unoq`:
+   `unoq-gaze-spike-DIGEST-2026-10-03.md`
+   (`1eZTXqfVE-56EWiSwEIWWundZbveilhUi`) and
+   `unoq-gaze-spike-WRITEUP-NOTES-2026-10-03.md`
+   (`1kgJhU059DVZMTNys63EYSn7gUOwX6amL`). Superseded snapshots go to
+   `unoq-gaze-spike ARCHIVE` (`1aWFUXOeGpNTzXl0Z_753VCpgFIlam_Ry`) renamed
+   `SUPERSEDED <date> ...` -- 09-21, 09-23, 09-29 and both 09-30 files are
+   there, the last two labelled as carrying the Manzi/Banzi error.
+
+   **PULL, not just push.** `head_track.md` and `headtrack.py` lived ONLY on
+   Drive, in `claude/sip-n-puff/`; they are now backed up byte-exact in
+   `docs/from_drive/`. Syncing the two directions against each other also
+   found a paragraph that existed in the Drive digest and never in the local
+   one. **Diff before you overwrite either side.**
+
+   Figures, the 1.7 MB study data and the full RESULTS.md are NOT copied to
+   Drive on purpose -- they live in the public repo, versioned and always
+   current, where a Drive snapshot goes stale. The write-up notes link them.
+
+   The measurement report is a Claude Doc, not Drive:
+   https://claude.ai/artifact/DZrdz44qiA5NHy175mNJed
 
 ## Where we are right now
 
