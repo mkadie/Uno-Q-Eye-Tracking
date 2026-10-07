@@ -896,6 +896,37 @@ condition never measured; adding NoIR raises its risk rather than lowering it.
    The measurement report is a Claude Doc, not Drive:
    https://claude.ai/artifact/DZrdz44qiA5NHy175mNJed
 
+## 2026-10-06: a SECOND PROJECT NOW SHARES THIS BOARD
+
+`braille-q` — a braille / steno / talker device for a new contest — was split out
+on 2026-10-06. It lives at `/home/trex/claude/unoQ/braille-q`, launches with
+`~/claude/braille-q.sh`, and **tests on this same physical UNO Q.**
+
+**Pushes cannot collide** — it has its own `.hil.env` and pushes to
+`~/braille-q` on the board, not `~/unoq-gaze-spike`. **Everything else is
+shared:** every device, and the 10 GB root partition.
+
+**So before claiming a device, check nobody else has it.** A leftover holder makes
+the next open fail in a way that reads exactly like dead hardware — this project
+lost time to its own leftover talker on 2026-10-04.
+
+```bash
+./hil raw 'fuser -v /dev/video0'
+./hil raw 'ps -eo pid,etime,cmd | grep -iE "talker|menu|python3" | grep -v grep'
+```
+
+Both launchers now print a warning if the other project was active in the last 30
+minutes, and `~/claude/unoq.sh --restore` runs the whole board-recovery chain
+without starting a session.
+
+**The board knowledge has moved to a shared skill:**
+`~/.claude/skills/uno-q-board/`. Governor, IP discovery, the ANX7625 display
+failure, the audio card naming, power, the batteryless RTC, the silicon and GPU
+measurements, the hil workflow, and `reference/discipline.md` — the measurement
+lessons — now live there so both projects read one copy. **CLAUDE.md and this file
+remain the authority for anything gaze-specific.** When you measure something
+about the *board*, put it in the skill.
+
 ## Board state at the end of the 2026-10-04 session
 
 **THE BOARD WAS LEFT POWERED ON.** It was not shut down, because the session
