@@ -1,6 +1,6 @@
 # RESTART — read this first after a crash or power loss
 
-Last updated: **2026-10-06**, end of session — a SECOND PROJECT (`braille-q`) now shares this board, and the board-level knowledge has moved to a shared skill. Previous session: the RED LAMP WAS BLINDING THE FACE DETECTOR and a grayscale fallback fixes it; the media carrier board and two NoIR cameras are IN HAND. Code public on GitHub. **BOARD POWERED DOWN 2026-10-06 — it needs physical access to come back.**
+Last updated: **2026-10-07**, end of session — a SECOND PROJECT (`braille-q`) now shares this board, and the board-level knowledge has moved to a shared skill. Previous session: the RED LAMP WAS BLINDING THE FACE DETECTOR and a grayscale fallback fixes it; the media carrier board and two NoIR cameras are IN HAND. Code public on GitHub. **BOARD IS POWERED ON AND CANNOT BE TURNED OFF IN SOFTWARE — `systemctl poweroff` REBOOTS it. The USB-C cable is the only off switch; see "Board state".**
 
 > **THE LAMP THIS PROJECT RECOMMENDS WAS COSTING 24 POINTS OF FACE DETECTION,
 > and it had been doing so since 2026-09-23.** MEASURED 2026-10-04: the lamp
@@ -927,21 +927,60 @@ lessons — now live there so both projects read one copy. **CLAUDE.md and this 
 remain the authority for anything gaze-specific.** When you measure something
 about the *board*, put it in the skill.
 
-## Board state at the end of the 2026-10-06 session
+## Board state at the end of the 2026-10-07 session
 
-**THE BOARD IS POWERED DOWN**, shut down deliberately at the end of the session
-with `sudo systemctl poweroff`. **It needs physical access to come back on** —
-there is no remote power control. If it does not answer next session, that is
-almost certainly why, and not a fault.
+### `systemctl poweroff` DOES NOT POWER THIS BOARD OFF. It reboots.
 
-State at shutdown, so a difference next time means something: governor
-**`performance`**, uptime 3 d 3 h, **no crashes this session**, **nothing holding
-the camera**, root partition **68% used, 3.1 G free**. The kiosk (`bin/menu`, up
-3 days) went down with it and should return on boot as an autostart.
+**MEASURED 2026-10-07, and it corrects advice that was in this file and in
+`unoq.sh`.** A `sudo systemctl poweroff` on a board that had been up 3 d 3 h
+produced a board that was **up 1 minute**. The journal from the previous boot
+shows the shutdown itself was completely correct:
 
-A cold power cycle is also what clears the **ANX7625 display failure** (1024x768,
-no EDID), which a warm reboot does not — so this shutdown is the good kind if the
-display was misbehaving.
+```
+systemd[1]: Reached target poweroff.target - System Power Off.
+systemd-shutdown[1]: Syncing filesystems and block devices.
+systemd[1]: Shutting down.
+```
+
+So systemd halted cleanly and synced — **and the hardware came straight back
+up.** There is no `pm_power_off` implementation, so the kernel falls back to a
+restart, and USB-C power is always present with nothing able to latch it off.
+
+**THE USB-C CABLE IS THE ONLY OFF SWITCH.** The safe procedure, and it is safe
+precisely because the shutdown half works:
+
+```bash
+./hil raw 'sudo systemctl poweroff'    # syncs and halts cleanly
+# then pull the USB-C power within ~15 s, before it finishes rebooting
+```
+
+**Every surprise reboot of this kind costs you the governor.** Confirmed in this
+very incident: it came back on **`schedutil`**, so any timing afterwards is void
+until `./hil perf`. `light-locker` is unpaused again too, and the kiosk
+autostarted.
+
+### So: THE BOARD IS CURRENTLY POWERED ON
+
+Left clean and idle. State as of the last contact:
+
+- governor **`schedutil`** (reverted by the unintended reboot — **set
+  `performance` before any timing next session**)
+- uptime ~1 minute, IP still **10.42.0.119**
+- **nothing holding the camera**; no configfs gadget or functionfs mount left
+  behind by `braille-q`'s probes
+- filesystems **synced**, so it is safe to unplug at any point
+- root partition **68% used, 3.1 G free**
+- the kiosk (`bin/menu`) autostarted and is running
+- the faire study data was verified **byte-for-byte identical** to
+  `study_data/` here before the shutdown attempt, so **nothing lives only on the
+  board**
+
+**To actually turn it off: unplug the USB-C.** It is already synced.
+
+This also sharpens the **ANX7625 display note** elsewhere in this file: when that
+says "only a true power cycle clears it", a `systemctl poweroff` does **not**
+count — it is a warm restart as far as the hardware is concerned. Pull the
+cable.
 
 - IP **10.42.0.119** at last contact; it changes between boots and `hil` will
   hunt for it by hostname if the address goes silent. **MEASURED 2026-10-06: that
