@@ -974,6 +974,18 @@ Left clean and idle. State as of the last contact:
 - the faire study data was verified **byte-for-byte identical** to
   `study_data/` here before the shutdown attempt, so **nothing lives only on the
   board**
+- **the screen recordings are now backed up locally too** — 2026-10-07, both
+  sets pulled to **`/home/trex/claude/unoQ/board_captures/`** and verified by
+  md5 on both sides, not by trusting rsync. `~/shots` (3486 frames, 432 MB, the
+  32-minute eyepose run) -> `talker_eyepose_2026-10-04/`, and `~/shots_eye`
+  (838 frames, 107 MB, the run the README screenshots came from) ->
+  `talker_eye_2026-10-04/`. **The originals stay on the board** — this is a
+  backup, not a move.
+
+  **That directory is deliberately OUTSIDE both git repos.**
+  `board_artifacts/` here is *fully tracked* — its `.gitignore` entry says in so
+  many words not to re-ignore it — so 540 MB put there would have been silently
+  committed. See `board_captures/README.md`.
 
 **To actually turn it off: unplug the USB-C.** It is already synced.
 
