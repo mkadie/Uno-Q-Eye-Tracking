@@ -1,6 +1,6 @@
 # RESTART — read this first after a crash or power loss
 
-Last updated: **2026-10-04**, end of session — the RED LAMP WAS BLINDING THE FACE DETECTOR and a grayscale fallback fixes it. **The media carrier board and two NoIR cameras are now IN HAND.** Code public on GitHub. **Board left powered ON — see "Where we are right now".**
+Last updated: **2026-10-06**, end of session — a SECOND PROJECT (`braille-q`) now shares this board, and the board-level knowledge has moved to a shared skill. Previous session: the RED LAMP WAS BLINDING THE FACE DETECTOR and a grayscale fallback fixes it; the media carrier board and two NoIR cameras are IN HAND. Code public on GitHub. **BOARD POWERED DOWN 2026-10-06 — it needs physical access to come back.**
 
 > **THE LAMP THIS PROJECT RECOMMENDS WAS COSTING 24 POINTS OF FACE DETECTION,
 > and it had been doing so since 2026-09-23.** MEASURED 2026-10-04: the lamp
@@ -927,20 +927,29 @@ lessons — now live there so both projects read one copy. **CLAUDE.md and this 
 remain the authority for anything gaze-specific.** When you measure something
 about the *board*, put it in the skill.
 
-## Board state at the end of the 2026-10-04 session
+## Board state at the end of the 2026-10-06 session
 
-**THE BOARD WAS LEFT POWERED ON.** It was not shut down, because the session
-ended on "update" rather than "exit" and a powered-off board needs physical
-access to come back. Shut it down when convenient:
+**THE BOARD IS POWERED DOWN**, shut down deliberately at the end of the session
+with `sudo systemctl poweroff`. **It needs physical access to come back on** —
+there is no remote power control. If it does not answer next session, that is
+almost certainly why, and not a fault.
 
-```
-./hil raw 'sudo systemctl poweroff'
-```
+State at shutdown, so a difference next time means something: governor
+**`performance`**, uptime 3 d 3 h, **no crashes this session**, **nothing holding
+the camera**, root partition **68% used, 3.1 G free**. The kiosk (`bin/menu`, up
+3 days) went down with it and should return on boot as an autostart.
 
-- governor **`performance`**, `light-locker` paused, camera **free**
+A cold power cycle is also what clears the **ANX7625 display failure** (1024x768,
+no EDID), which a warm reboot does not — so this shutdown is the good kind if the
+display was misbehaving.
+
 - IP **10.42.0.119** at last contact; it changes between boots and `hil` will
-  hunt for it by hostname if the address goes silent
-- uptime was ~5 h, no crashes this session
+  hunt for it by hostname if the address goes silent. **MEASURED 2026-10-06: that
+  interface is a USB Ethernet DONGLE (`cdc_ncm`, ASIX AX88179), not a native MAC
+  — and it is on the same USB controller as the camera.** It reads as `ethernet`
+  in every tool. See the shared skill; it matters the moment anyone touches USB
+  roles.
+- `light-locker` was paused; that does not survive a reboot
 
 **Two housekeeping items left deliberately undone, decide and clear them:**
 
